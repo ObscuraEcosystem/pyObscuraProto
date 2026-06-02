@@ -7,10 +7,15 @@ src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src'))
 sys.path.insert(0, src_dir)
 
 try:
-    # We import the high-level package and use the re-exported components
-    from ObscuraProto import PayloadBuilder, PayloadReader
+    # We import the raw C++ bindings for testing low-level functionalities
+    from ObscuraProto import _bindings
+    PayloadBuilder = _bindings.PayloadBuilder
+    PayloadReader = _bindings.PayloadReader
+    KeyPair = _bindings.KeyPair
+    ConnectionHdl = _bindings.ConnectionHdl # Need this for Server test
+    Payload = _bindings.Payload # Need this for mock return values
 except ImportError as e:
-    pytest.fail(f"Could not import the ObscuraProto package: {e}. Searched in: {sys.path}", pytrace=False)
+    pytest.fail(f"Could not import the ObscuraProto bindings: {e}. Searched in: {sys.path}", pytrace=False)
 
 
 def test_read_int_uint_and_peek():
@@ -92,3 +97,57 @@ def test_type_interchangeability():
     assert reader_u.peek_next_param_size() == 1
     # -1 in one-byte two's complement is 255 (unsigned)
     assert reader_u.read_uint() == 255
+
+def test_ws_server_register_request_handler():
+    """
+    Tests that WsServerWrapper.register_request_handler can accept a Python callable
+    with the correct signature without raising an error during registration.
+    """
+    server = _bindings.WsServer(_bindings.Crypto.generate_sign_keypair())
+    
+    # Mock ConnectionHdl and PayloadReader for signature
+    # Note: We cannot easily trigger the C++ callback from Python without a full
+    # network simulation, so this test focuses on successful registration.
+    mock_hdl = ConnectionHdl() # Placeholder, actual value from C++
+    mock_payload = PayloadBuilder(0x00).build()
+    mock_reader = PayloadReader(mock_payload) # Placeholder, actual value from C++
+
+    def mock_server_request_handler(hdl: ConnectionHdl, reader: PayloadReader) -> Payload:
+        # These assertions will only run if the handler is actually called by C++
+        # which isn't happening in this test. They are here to show the expected signature.
+        assert isinstance(hdl, ConnectionHdl)
+        assert isinstance(reader, PayloadReader)
+        return PayloadBuilder(0xFF).add_param("server_response").build()
+
+    try:
+        server.register_request_handler(0x1001, mock_server_request_handler)
+        # If no exception, registration was successful from Python perspective
+        assert True
+    except Exception as e:
+        pytest.fail(f"register_request_handler for WsServer raised an exception: {e}")
+
+def test_ws_client_register_request_handler():
+    """
+    Tests that WsClientWrapper.register_request_handler can accept a Python callable
+    with the correct signature without raising an error during registration.
+    """
+    # Client needs a server public key. Generate one for testing purposes.
+    server_keys = _bindings.Crypto.generate_sign_keypair()
+    client = _bindings.WsClient(server_keys)
+
+    # Mock PayloadReader for signature
+    # Note: Similar to the server test, this focuses on successful registration.
+    mock_payload = PayloadBuilder(0x00).build()
+    mock_reader = PayloadReader(mock_payload) # Placeholder, actual value from C++
+
+    def mock_client_request_handler(reader: PayloadReader) -> Payload:
+        # These assertions will only run if the handler is actually called by C++
+        assert isinstance(reader, PayloadReader)
+        return PayloadBuilder(0xFE).add_param("client_response").build()
+
+    try:
+        client.register_request_handler(0x2001, mock_client_request_handler)
+        # If no exception, registration was successful from Python perspective
+        assert True
+    except Exception as e:
+        pytest.fail(f"register_request_handler for WsClient raised an exception: {e}")

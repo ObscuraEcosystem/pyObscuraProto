@@ -35,7 +35,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r dev-requirements.txt
-        pip install pybind11 wheel setuptools cmake
 
     - name: Build and install project
       run: |

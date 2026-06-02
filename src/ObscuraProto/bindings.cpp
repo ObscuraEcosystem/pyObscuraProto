@@ -187,13 +187,22 @@ PYBIND11_MODULE(_obscuraproto, m) {
              "Stops the server thread.")
         .def("send", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload) {
             self.send(hdl.hdl, payload);
-        }, py::call_guard<py::gil_scoped_release>(), "Send a payload to a specific client.")
+        }, "Send a payload to a specific client.")
+        .def("sync_request", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload) {
+            return self.sync_request(hdl.hdl, payload);
+        }, py::call_guard<py::gil_scoped_release>(), "Sends a request to a client and returns a response.")
         .def("register_op_handler", [](WsServerWrapper &self, Payload::OpCode op_code, 
                                        std::function<void(WsConnectionHdlWrapper, Payload)> callback) {
             self.register_op_handler(op_code, [callback](WsConnectionHdl hdl, Payload payload) {
                 callback(WsConnectionHdlWrapper{hdl}, payload);
             });
         }, "Register a handler for a specific opcode.")
+        .def("register_request_handler", [](WsServerWrapper &self, Payload::OpCode op_code, 
+                                            std::function<Payload(WsConnectionHdlWrapper, PayloadReader&)> callback) {
+            self.register_request_handler(op_code, [callback](WsConnectionHdl hdl, PayloadReader& reader) {
+                return callback(WsConnectionHdlWrapper{hdl}, reader);
+            });
+        }, "Register a request handler for a specific opcode, expecting a Payload response.")
         .def("set_default_payload_handler", [](WsServerWrapper &self,
                                                 std::function<void(WsConnectionHdlWrapper, Payload)> callback) {
             self.set_default_payload_handler([callback](WsConnectionHdl hdl, Payload payload) {
@@ -210,8 +219,12 @@ PYBIND11_MODULE(_obscuraproto, m) {
              "Disconnects from the server.")
         .def("send", &WsClientWrapper::send, py::call_guard<py::gil_scoped_release>(),
              "Sends a payload to the server.")
+        .def("sync_request", [](WsClientWrapper &self, const Payload &payload) {
+            return self.sync_request(payload);
+        }, py::call_guard<py::gil_scoped_release>(), "Sends a request to the server and returns a response.")
         .def("set_on_ready_callback", &WsClientWrapper::set_on_ready_callback)
         .def("set_on_disconnect_callback", &WsClientWrapper::set_on_disconnect_callback)
         .def("register_op_handler", &WsClientWrapper::register_op_handler)
+        .def("register_request_handler", &WsClientWrapper::register_request_handler, "Register a request handler for a specific opcode, expecting a Payload response.")
         .def("set_default_payload_handler", &WsClientWrapper::set_default_payload_handler);
 }

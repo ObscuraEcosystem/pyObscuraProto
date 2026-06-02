@@ -2,6 +2,7 @@
 ObscuraProto high-level Python library.
 """
 import inspect
+import asyncio # Added for asyncio integration
 
 try:
     # This is the C++ extension module built by CMake.
@@ -149,6 +150,84 @@ def _create_unpacking_handler(handler, receives_hdl_from_native=False):
     return unpacking_wrapper
 
 
+def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
+    """
+    Internal helper to create a wrapper function for request handlers.
+    It intelligently calls a handler by inspecting its type hints, passing the
+    connection handle (for server), or auto-unpacked arguments from a PayloadReader.
+    The handler is expected to return a Payload object.
+    """
+    sig = inspect.signature(handler)
+    params = sig.parameters
+
+    hdl_param = None
+    unpack_params = []
+
+    # Identify hdl parameter if present
+    param_list = list(params.values())
+    if receives_hdl_from_native and param_list and param_list[0].annotation is ConnectionHdl:
+        hdl_param = param_list[0]
+        unpack_params = param_list[1:]
+    else:
+        unpack_params = param_list
+
+    def unpacking_request_wrapper(*args):
+        # Determine what C++ passed us based on the context
+        # For server: (hdl, reader_obj)
+        # For client: (reader_obj)
+        if receives_hdl_from_native:
+            hdl = args[0]
+            reader_obj = args[1]
+        else:
+            hdl = None
+            reader_obj = args[0] # This will be the PayloadReader object passed from C++
+
+        handler_kwargs = {}
+        if hdl_param:
+            handler_kwargs[hdl_param.name] = hdl
+
+        # Unpack parameters from the PayloadReader
+        reader = reader_obj # In C++, PayloadReader is passed by reference, Python gets a binding object
+
+        type_map = {
+            str: reader.read_string,
+            int: reader.read_int,
+            uint: reader.read_uint,
+            float: reader.read_float,
+            bool: reader.read_bool,
+            bytes: reader.read_bytes,
+        }
+
+        try:
+            for param in unpack_params:
+                type_hint = param.annotation
+                if type_hint is PayloadReader: # If the handler explicitly requests PayloadReader
+                    handler_kwargs[param.name] = reader
+                elif type_hint in type_map:
+                    handler_kwargs[param.name] = type_map[type_hint]()
+                else:
+                    raise TypeError(f"Unsupported or missing type hint for parameter '{param.name}'.")
+
+        except Exception as e:
+            # We don't have opcode easily here, as it's extracted by C++ before passing PayloadReader
+            print(f"[ERROR] Failed to auto-unpack request payload for handler '{handler.__name__}'. "
+                  f"Check that the handler signature matches the expected payload structure. Details: {e}")
+            # For request handlers, if unpacking fails, we must return an error payload
+            # or allow the C++ layer to handle the exception. For now, a generic error.
+            # A more robust solution might involve an error payload specific opcode.
+            # The C++ will handle the Python exception, but returning a Payload is cleaner.
+            error_payload = PayloadBuilder(0x0000).add_param(f"Error: {e}").build()
+            return error_payload
+
+        # Call the handler, expecting a Payload return
+        response_payload = handler(**handler_kwargs)
+        if not isinstance(response_payload, _bindings.Payload):
+            raise TypeError(f"Request handler '{handler.__name__}' must return a 'Payload' object, but returned {type(response_payload)}")
+        return response_payload
+
+    return unpacking_request_wrapper
+
+
 # --- High-level wrapper classes ---
 
 class Server:
@@ -187,6 +266,10 @@ class Server:
         """Sends a payload to a specific client."""
         self._server.send(hdl, payload)
 
+    async def async_request(self, hdl, payload) -> Payload:
+        """Sends a request to a specific client and returns a future for the response."""
+        return await asyncio.to_thread(self._server.sync_request, hdl, payload)
+
     def on_payload(self, opcode):
         """
         Decorator to register a handler for a specific opcode.
@@ -213,6 +296,26 @@ class Server:
         wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
         self._server.set_default_payload_handler(wrapper)
         return handler
+
+    def on_request(self, opcode):
+        """
+        Registers a handler for a specific opcode that expects a response.
+
+        The decorated function will be called with ConnectionHdl (for the server)
+        and arguments unpacked from the payload reader based on type hints.
+        The handler must return a Payload object as a response.
+
+        Example:
+            @server.on_request(0x1002)
+            def handle_sum_request(hdl: ConnectionHdl, a: int, b: int) -> Payload:
+                result = a + b
+                return PayloadBuilder(0x1003).add_param(result).build()
+        """
+        def decorator(handler):
+            wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=True)
+            self._server.register_request_handler(opcode, wrapper)
+            return handler
+        return decorator
 
 
 class Client:
@@ -245,6 +348,10 @@ class Client:
     def send(self, payload):
         """Sends a payload to the server."""
         self._client.send(payload)
+
+    async def async_request(self, payload) -> Payload:
+        """Sends a request to the server and returns a future for the response."""
+        return await asyncio.to_thread(self._client.sync_request, payload)
 
     def on_ready(self, handler):
         """Decorator to register a callback for when the client is connected and ready."""
@@ -283,3 +390,22 @@ class Client:
         self._client.set_default_payload_handler(wrapper)
         return handler
 
+    def on_request(self, opcode):
+        """
+        Registers a handler for a specific opcode that expects a response.
+
+        The decorated function will be called with ConnectionHdl (for the server)
+        and arguments unpacked from the payload reader based on type hints.
+        The handler must return a Payload object as a response.
+
+        Example:
+            @client.on_request(0x1002)
+            def handle_sum_request(a: int, b: int) -> Payload:
+                result = a + b
+                return PayloadBuilder(0x1003).add_param(result).build()
+        """
+        def decorator(handler):
+            wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=False)
+            self._client.register_request_handler(opcode, wrapper)
+            return handler
+        return decorator
