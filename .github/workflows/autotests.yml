@@ -29,7 +29,7 @@ jobs:
     - name: Install build dependencies (CMake, etc.)
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake
+        sudo apt-get install -y cmake libsodium-dev
 
     - name: Install Python dependencies
       run: |
