@@ -1,16 +1,17 @@
 import asyncio
-import time
+
 from ObscuraProto import (
+    ConnectionHdl,
     Crypto,
-    Server,
     Payload,
     PayloadBuilder,
-    ConnectionHdl,
+    Server,
 )
 
 # --- Opcodes ---
 OP_ADD_REQUEST = 0x1000
 OP_ADD_RESPONSE = 0x1001
+
 
 async def main():
     """Main function to run the server example."""
@@ -54,6 +55,7 @@ async def main():
         print("[SYSTEM] Shutting down server...")
         server.stop()
         print("[SYSTEM] Server shutdown complete.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

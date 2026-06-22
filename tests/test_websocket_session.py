@@ -1,11 +1,12 @@
-import sys
 import os
-import pytest
-import time
+import sys
 import threading
+import time
+
+import pytest
 
 # Add the src directory to the path to find the ObscuraProto package
-src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src'))
+src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, src_dir)
 
 try:
@@ -21,10 +22,12 @@ OP_S2C_UNHANDLED = 0x8002
 
 PORT = 9003
 
+
 @pytest.fixture(scope="module")
 def crypto_init():
     """Fixture to ensure Crypto is initialized only once per module."""
     op.Crypto.init()
+
 
 def test_websocket_session(crypto_init, capsys):
     """
@@ -32,7 +35,7 @@ def test_websocket_session(crypto_init, capsys):
     """
     # --- Test state and synchronization ---
     client_ready = threading.Event()
-    
+
     server_received_payloads = {}
     client_received_payloads = {}
 
@@ -49,7 +52,7 @@ def test_websocket_session(crypto_init, capsys):
         print("[SERVER] Echo handler called")
         server_received_payloads[OP_C2S_ECHO] = payload
         # Echo back and also send another message
-        server.send(hdl, payload) 
+        server.send(hdl, payload)
         server.send(hdl, op.PayloadBuilder(OP_S2C_UNHANDLED).build())
         server_echo_received.set()
 
@@ -69,11 +72,11 @@ def test_websocket_session(crypto_init, capsys):
         print("[CLIENT] Ready handler called")
         client_ready.set()
 
-    @client.on_payload(OP_C2S_ECHO) # Expecting the echo back
+    @client.on_payload(OP_C2S_ECHO)  # Expecting the echo back
     def client_echo_handler(payload: op.Payload):
         print("[CLIENT] Echo handler called")
         client_received_payloads[OP_C2S_ECHO] = payload
-    
+
     @client.on_payload(OP_S2C_RESPONSE)
     def client_response_handler(payload: op.Payload):
         print("[CLIENT] Response handler called")
@@ -89,7 +92,7 @@ def test_websocket_session(crypto_init, capsys):
     # --- Test Execution ---
     try:
         server.start(PORT)
-        time.sleep(0.1) # Give server time to start
+        time.sleep(0.1)  # Give server time to start
         client.connect(f"ws://localhost:{PORT}")
 
         # 1. Wait for client to be ready
@@ -99,7 +102,7 @@ def test_websocket_session(crypto_init, capsys):
         print("\n[TEST] Client sending messages...")
         client.send(op.PayloadBuilder(OP_C2S_ECHO).add_param("echo me").build())
         client.send(op.PayloadBuilder(OP_C2S_UNHANDLED).add_param("unhandled").build())
-        
+
         # 3. Wait for all events to be processed
         print("[TEST] Waiting for events...")
         assert server_echo_received.wait(timeout=5), "Server did not receive echo payload"
@@ -112,17 +115,17 @@ def test_websocket_session(crypto_init, capsys):
         assert len(server_received_payloads) == 2
         assert OP_C2S_ECHO in server_received_payloads
         assert OP_C2S_UNHANDLED in server_received_payloads
-        
+
         # Client should have received three payloads (echo, response, unhandled)
         assert len(client_received_payloads) == 3
-        assert OP_C2S_ECHO in client_received_payloads # The echo back
+        assert OP_C2S_ECHO in client_received_payloads  # The echo back
         assert OP_S2C_RESPONSE in client_received_payloads
         assert OP_S2C_UNHANDLED in client_received_payloads
 
         # Check payload contents
         reader_echo = op.PayloadReader(server_received_payloads[OP_C2S_ECHO])
         assert reader_echo.read_string() == "echo me"
-        
+
         reader_resp = op.PayloadReader(client_received_payloads[OP_S2C_RESPONSE])
         assert reader_resp.read_string() == "Handled by default"
 

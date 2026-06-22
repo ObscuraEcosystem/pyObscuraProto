@@ -9,8 +9,15 @@
     pip install pyObscuraProto
 ```
 
-<!-- ## Contributing
-Contributions are welcome! Please refer to `CONTRIBUTING.md` (if available) for guidelines. -->
+## Contributing
+
+Contributions are welcome! Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+This project uses:
+- **Ruff** for linting and code formatting
+- **Pyright** for static type checking
+- **Pre-commit** hooks to automate checks before each commit
+- **GitHub Actions** CI to run all checks on every push and pull request
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

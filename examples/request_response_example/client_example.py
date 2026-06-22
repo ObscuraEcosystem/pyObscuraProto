@@ -1,17 +1,17 @@
 import asyncio
-import time
+
 from ObscuraProto import (
-    Crypto,
     Client,
+    Crypto,
     PayloadBuilder,
     PayloadReader,
-    Payload,
     PublicKey,
 )
 
 # --- Opcodes ---
 OP_ADD_REQUEST = 0x1000
 OP_ADD_RESPONSE = 0x1001
+
 
 async def main():
     """Main function to run the client example."""
@@ -23,11 +23,11 @@ async def main():
 
     # 2. Setup Client
     port = 9003
-    
+
     # Read server public key from the temporary file
     temp_dir = "."
     public_key_path = f"{temp_dir}/server_public_key.pem"
-    
+
     try:
         with open(public_key_path, "rb") as f:
             server_public_key_bytes = f.read()
@@ -35,7 +35,10 @@ async def main():
         server_public_key.data = list(server_public_key_bytes)
         print(f"[CLIENT] Server public key loaded from {public_key_path}")
     except FileNotFoundError:
-        print(f"[CLIENT] Error: Server public key file not found at {public_key_path}. Make sure the server is running and has generated the key.")
+        print(
+            f"[CLIENT] Error: Server public key file not found at {public_key_path}. "
+            f"Make sure the server is running and has generated the key."
+        )
         return
     except Exception as e:
         print(f"[CLIENT] Error loading server public key: {e}")
@@ -59,10 +62,10 @@ async def main():
     # Client sends a request and waits for the response
     print("[CLIENT] Sending add request (5 + 7)...")
     add_request_payload = PayloadBuilder(OP_ADD_REQUEST).add_param(5).add_param(7).build()
-    
+
     try:
         response_payload = await client.async_request(add_request_payload)
-        
+
         print("[CLIENT] Received response from server.")
         if response_payload.op_code == OP_ADD_RESPONSE:
             reader = PayloadReader(response_payload)
@@ -71,17 +74,18 @@ async def main():
             assert sum_result == 12
         else:
             print(f"[CLIENT] Received unexpected response opcode: {hex(response_payload.op_code)}")
-        
+
     except Exception as e:
         print(f"[CLIENT] An error occurred during the request: {e}")
-        
+
         print("[SYSTEM] Request-response exchange completed.")
-    
+
     finally:
         # Shutdown
         print("[SYSTEM] Shutting down client...")
         client.disconnect()
         print("[SYSTEM] Client shutdown complete.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

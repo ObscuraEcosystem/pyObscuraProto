@@ -1,2 +1,5 @@
 pytest
 pytest-asyncio
+ruff
+pyright
+pre-commit

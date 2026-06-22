@@ -1,12 +1,13 @@
-import time
 import threading
+import time
+
 from ObscuraProto import (
-    Crypto,
-    Server,
     Client,
+    ConnectionHdl,  # Import ConnectionHdl
+    Crypto,
     PayloadBuilder,
-    uint, # Import the new marker type
-    ConnectionHdl, # Import ConnectionHdl
+    Server,
+    uint,  # Import the new marker type
 )
 
 # --- Opcodes ---
@@ -35,11 +36,11 @@ def main():
     def handle_client_message(hdl: ConnectionHdl, message: str, value: uint):
         print("\n--- Server Received Message ---")
         print(f"[SERVER] Received: message='{message}', value={value}")
-        
+
         # Send a response back
         response = PayloadBuilder(OP_SERVER_RESPONSE).add_param("Hello from server!").build()
         server.send(hdl, response)
-        
+
         server_received_event.set()
 
     server.start(port)

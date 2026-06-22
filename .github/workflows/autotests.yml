@@ -36,9 +36,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r dev-requirements.txt
 
+    - name: Lint with Ruff
+      run: |
+        ruff check src/ tests/ examples/
+
+    - name: Check formatting with Ruff
+      run: |
+        ruff format --check src/ tests/ examples/
+
     - name: Build and install project
       run: |
         pip install -e .
+
+    - name: Type-check with Pyright
+      run: |
+        pyright src/ tests/ examples/
 
     - name: Run tests
       run: |

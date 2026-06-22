@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools", "cmake"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["N999", "N801", "N813"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pyright]
+include = ["src", "tests", "examples"]
+exclude = ["build", "**/__pycache__"]
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportMissingTypeStubs = "warning"
+reportPrivateUsage = "warning"
+reportAttributeAccessIssue = "warning"
+reportInvalidTypeForm = "warning"

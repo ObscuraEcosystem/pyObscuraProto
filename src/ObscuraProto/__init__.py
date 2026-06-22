@@ -1,8 +1,9 @@
 """
 ObscuraProto high-level Python library.
 """
+
+import asyncio  # Added for asyncio integration
 import inspect
-import asyncio # Added for asyncio integration
 
 try:
     # This is the C++ extension module built by CMake.
@@ -11,14 +12,14 @@ except ImportError:
     # If the extension is not in the same directory, it might be in the build/lib directory.
     # This is a fallback for development environments. For a real installation,
     # the package structure would handle this.
-    import sys
     import os
-    
+    import sys
+
     # Heuristic to find the build directory.
     # Assumes the project root is two levels up from this file's directory.
-    proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    build_dir = os.path.join(proj_root, 'build')
-    
+    proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    build_dir = os.path.join(proj_root, "build")
+
     # The compiled library is directly in the build directory now
     if os.path.isdir(build_dir):
         sys.path.insert(0, build_dir)
@@ -29,16 +30,17 @@ except ImportError:
             for f in os.listdir(build_dir):
                 if f.startswith("_obscuraproto") and f.endswith(".so"):
                     import importlib.util
+
                     spec = importlib.util.spec_from_file_location("_obscuraproto", os.path.join(build_dir, f))
-                    _bindings = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(_bindings)
-                    sys.modules['_obscuraproto'] = _bindings
+                    _bindings = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+                    spec.loader.exec_module(_bindings)  # pyright: ignore[reportOptionalMemberAccess]
+                    sys.modules["_obscuraproto"] = _bindings
                     break
             else:
                 raise ImportError("Could not find the _obscuraproto.*.so module in the build directory.")
         else:
-             raise ImportError("Build directory not found.")
-             
+            raise ImportError("Build directory not found.")
+
     except ImportError as e:
         raise ImportError(
             "Could not import the compiled ObscuraProto C++ bindings (_obscuraproto). "
@@ -46,18 +48,21 @@ except ImportError:
             f"Original error: {e}"
         )
 
+
 # --- Marker type for automatic unpacking ---
 class uint(int):
-    """A marker type for function signature hints. 
+    """A marker type for function signature hints.
     Indicates that an integer parameter should be read from a payload as unsigned.
-    
+
     Example:
         @server.on_payload(0x1234)
         def my_handler(value: uint):
             # value will be read using PayloadReader.read_uint()
             print(f"Received unsigned value: {value}")
     """
+
     pass
+
 
 # --- Re-export low-level components ---
 Role = _bindings.Role
@@ -96,21 +101,27 @@ def _create_unpacking_handler(handler, receives_hdl_from_native=False):
 
     # --- Basic validation ---
     if hdl_param and not receives_hdl_from_native:
-        raise TypeError(f"Handler '{handler.__name__}' is annotated with ConnectionHdl but is registered on a client, which does not receive it.")
+        raise TypeError(
+            f"Handler '{handler.__name__}' is annotated with ConnectionHdl "
+            "but is registered on a client, which does not receive it."
+        )
     if payload_param and unpack_params:
-        raise TypeError(f"Handler '{handler.__name__}' cannot mix auto-unpacking parameters and a 'Payload' parameter. Choose one method.")
+        raise TypeError(
+            f"Handler '{handler.__name__}' cannot mix auto-unpacking "
+            "parameters and a 'Payload' parameter. Choose one method."
+        )
 
     # --- Create the specialized wrapper ---
     def unpacking_wrapper(*args):
         # Determine what C++ passed us based on the context
         hdl = args[0] if receives_hdl_from_native else None
         payload = args[1] if receives_hdl_from_native else args[0]
-        
+
         handler_kwargs = {}
 
         if hdl_param:
             handler_kwargs[hdl_param.name] = hdl
-        
+
         if payload_param:
             handler_kwargs[payload_param.name] = payload
             # When using raw payload, no further unpacking is done.
@@ -139,10 +150,13 @@ def _create_unpacking_handler(handler, receives_hdl_from_native=False):
 
             except Exception as e:
                 op_code_hex = f"0x{payload.op_code:04x}" if payload else "N/A"
-                print(f"[ERROR] Failed to auto-unpack payload for OpCode {op_code_hex}. "
-                      f"Check that the handler signature for '{handler.__name__}' matches the payload structure. Details: {e}")
-                return # Suppress further errors
-        
+                print(
+                    f"[ERROR] Failed to auto-unpack payload for OpCode {op_code_hex}. "
+                    f"Check handler '{handler.__name__}' signature "
+                    f"matches the payload structure. Details: {e}"
+                )
+                return  # Suppress further errors
+
         # Call the handler with the arguments we've prepared.
         # This works even if there are no unpack_params (fire-and-forget handlers).
         return handler(**handler_kwargs)
@@ -180,14 +194,14 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
             reader_obj = args[1]
         else:
             hdl = None
-            reader_obj = args[0] # This will be the PayloadReader object passed from C++
+            reader_obj = args[0]  # This will be the PayloadReader object passed from C++
 
         handler_kwargs = {}
         if hdl_param:
             handler_kwargs[hdl_param.name] = hdl
 
         # Unpack parameters from the PayloadReader
-        reader = reader_obj # In C++, PayloadReader is passed by reference, Python gets a binding object
+        reader = reader_obj  # In C++, PayloadReader is passed by reference, Python gets a binding object
 
         type_map = {
             str: reader.read_string,
@@ -201,7 +215,7 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
         try:
             for param in unpack_params:
                 type_hint = param.annotation
-                if type_hint is PayloadReader: # If the handler explicitly requests PayloadReader
+                if type_hint is PayloadReader:  # If the handler explicitly requests PayloadReader
                     handler_kwargs[param.name] = reader
                 elif type_hint in type_map:
                     handler_kwargs[param.name] = type_map[type_hint]()
@@ -210,8 +224,10 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
 
         except Exception as e:
             # We don't have opcode easily here, as it's extracted by C++ before passing PayloadReader
-            print(f"[ERROR] Failed to auto-unpack request payload for handler '{handler.__name__}'. "
-                  f"Check that the handler signature matches the expected payload structure. Details: {e}")
+            print(
+                f"[ERROR] Failed to auto-unpack request payload for handler '{handler.__name__}'. "
+                f"Check that the handler signature matches the expected payload structure. Details: {e}"
+            )
             # For request handlers, if unpacking fails, we must return an error payload
             # or allow the C++ layer to handle the exception. For now, a generic error.
             # A more robust solution might involve an error payload specific opcode.
@@ -222,7 +238,10 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
         # Call the handler, expecting a Payload return
         response_payload = handler(**handler_kwargs)
         if not isinstance(response_payload, _bindings.Payload):
-            raise TypeError(f"Request handler '{handler.__name__}' must return a 'Payload' object, but returned {type(response_payload)}")
+            raise TypeError(
+                f"Request handler '{handler.__name__}' must return a "
+                f"'Payload' object, but returned {type(response_payload)}"
+            )
         return response_payload
 
     return unpacking_request_wrapper
@@ -230,13 +249,15 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
 
 # --- High-level wrapper classes ---
 
+
 class Server:
     """
     An ObscuraProto WebSocket server.
-    
+
     This class wraps the C++ WsServer to provide a Pythonic interface with
     decorators for handling events.
     """
+
     def __init__(self):
         """Initializes the server, generating its long-term signing key."""
         self._long_term_key = _bindings.Crypto.generate_sign_keypair()
@@ -254,7 +275,7 @@ class Server:
         """
         print(f"[PY-SERVER] Starting on port {port}...")
         self._server.run(port)
-        print(f"[PY-SERVER] Started.")
+        print("[PY-SERVER] Started.")
 
     def stop(self):
         """Stops the server."""
@@ -273,7 +294,7 @@ class Server:
     def on_payload(self, opcode):
         """
         Decorator to register a handler for a specific opcode.
-        
+
         The decorated function will be called with arguments unpacked from the
         payload based on type hints. If no type hints are provided, it will be
         called with `(hdl, payload)`.
@@ -283,10 +304,12 @@ class Server:
             def handle_login(hdl, username: str, password: str, attempt: uint):
                 print(f"Login attempt for '{username}'")
         """
+
         def decorator(handler):
             wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
             self._server.register_op_handler(opcode, wrapper)
             return handler
+
         return decorator
 
     def default_payload_handler(self, handler):
@@ -311,10 +334,12 @@ class Server:
                 result = a + b
                 return PayloadBuilder(0x1003).add_param(result).build()
         """
+
         def decorator(handler):
             wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=True)
             self._server.register_request_handler(opcode, wrapper)
             return handler
+
         return decorator
 
 
@@ -324,6 +349,7 @@ class Client:
 
     Wraps the C++ WsClient for a Pythonic interface with decorators.
     """
+
     def __init__(self, server_public_key):
         """
         Args:
@@ -331,7 +357,7 @@ class Client:
         """
         if not isinstance(server_public_key, _bindings.PublicKey):
             raise TypeError("server_public_key must be a PublicKey object.")
-            
+
         key_view = _bindings.KeyPair()
         key_view.public_key = server_public_key
         self._client = _bindings.WsClient(key_view)
@@ -366,7 +392,7 @@ class Client:
     def on_payload(self, opcode):
         """
         Decorator to register a handler for a specific opcode from the server.
-        
+
         The decorated function will be called with arguments unpacked from the
         payload based on type hints. If no type hints are provided, it will be
         called with the raw `payload` object.
@@ -376,10 +402,12 @@ class Client:
             def handle_message(author: str, message: str):
                 print(f"{author}: {message}")
         """
+
         def decorator(handler):
             wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=False)
             self._client.register_op_handler(opcode, wrapper)
             return handler
+
         return decorator
 
     def default_payload_handler(self, handler):
@@ -404,8 +432,10 @@ class Client:
                 result = a + b
                 return PayloadBuilder(0x1003).add_param(result).build()
         """
+
         def decorator(handler):
             wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=False)
             self._client.register_request_handler(opcode, wrapper)
             return handler
+
         return decorator
