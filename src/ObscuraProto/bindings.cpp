@@ -5,6 +5,7 @@
 #include <pybind11/chrono.h>
 #include <map>
 
+#include <obscuraproto/config.hpp>
 #include <obscuraproto/crypto.hpp>
 #include <obscuraproto/handshake_messages.hpp>
 #include <obscuraproto/keys.hpp>
@@ -39,6 +40,57 @@ PYBIND11_MODULE(_obscuraproto, m) {
 
     py::class_<VersionNegotiator>(m, "VersionNegotiator")
         .def_static("negotiate", &VersionNegotiator::negotiate);
+
+    // Config
+    py::class_<RateLimitConfig>(m, "RateLimitConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &RateLimitConfig::enabled)
+        .def_readwrite("messages_per_second", &RateLimitConfig::messages_per_second)
+        .def_readwrite("burst_size", &RateLimitConfig::burst_size)
+        .def_readwrite("handshake_attempts_per_minute", &RateLimitConfig::handshake_attempts_per_minute)
+        .def_readwrite("connections_per_minute", &RateLimitConfig::connections_per_minute)
+        .def_static("defaults", &RateLimitConfig::defaults);
+
+    py::class_<ConnectionLimitConfig>(m, "ConnectionLimitConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &ConnectionLimitConfig::enabled)
+        .def_readwrite("max_per_ip", &ConnectionLimitConfig::max_per_ip)
+        .def_readwrite("max_total", &ConnectionLimitConfig::max_total)
+        .def_static("defaults", &ConnectionLimitConfig::defaults);
+
+    py::class_<MessageLimitConfig>(m, "MessageLimitConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &MessageLimitConfig::enabled)
+        .def_readwrite("max_ws_frame_size", &MessageLimitConfig::max_ws_frame_size)
+        .def_readwrite("max_decrypted_payload", &MessageLimitConfig::max_decrypted_payload)
+        .def_static("defaults", &MessageLimitConfig::defaults);
+
+    py::class_<TimeoutConfig>(m, "TimeoutConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &TimeoutConfig::enabled)
+        .def_readwrite("handshake_ms", &TimeoutConfig::handshake_ms)
+        .def_readwrite("idle_ms", &TimeoutConfig::idle_ms)
+        .def_readwrite("check_interval_ms", &TimeoutConfig::check_interval_ms)
+        .def_static("defaults", &TimeoutConfig::defaults);
+
+    py::class_<ReservedOpcodes>(m, "ReservedOpcodes")
+        .def(py::init<>())
+        .def_readwrite("RESPONSE", &ReservedOpcodes::RESPONSE)
+        .def_readwrite("STREAM_START", &ReservedOpcodes::STREAM_START)
+        .def_readwrite("STREAM_DATA", &ReservedOpcodes::STREAM_DATA)
+        .def_readwrite("STREAM_END", &ReservedOpcodes::STREAM_END)
+        .def_readwrite("STREAM_CANCEL", &ReservedOpcodes::STREAM_CANCEL)
+        .def_static("defaults", &ReservedOpcodes::defaults);
+
+    py::class_<Config>(m, "Config")
+        .def(py::init<>())
+        .def_readwrite("rate_limit", &Config::rate_limit)
+        .def_readwrite("connection_limits", &Config::connection_limits)
+        .def_readwrite("message_limits", &Config::message_limits)
+        .def_readwrite("timeouts", &Config::timeouts)
+        .def_readwrite("opcodes", &Config::opcodes)
+        .def_static("from_yaml", &Config::from_yaml)
+        .def_static("with_defaults", &Config::with_defaults);
 
     // Keys
     py::class_<PublicKey>(m, "PublicKey")
@@ -217,7 +269,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
 
     // WS Server
     py::class_<WsServerWrapper>(m, "WsServer")
-        .def(py::init<KeyPair>())
+        .def(py::init<KeyPair, Config>(), py::arg("keypair"), py::arg("config") = Config::with_defaults())
         .def("run", &WsServerWrapper::run, py::call_guard<py::gil_scoped_release>(),
              "Runs the server in a background thread.")
         .def("stop", &WsServerWrapper::stop, py::call_guard<py::gil_scoped_release>(),
@@ -299,7 +351,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
 
     // WS Client
     py::class_<WsClientWrapper>(m, "WsClient")
-        .def(py::init<KeyPair>())
+        .def(py::init<KeyPair, Config>(), py::arg("keypair"), py::arg("config") = Config::with_defaults())
         .def("connect", &WsClientWrapper::connect, py::call_guard<py::gil_scoped_release>(),
              "Connects to the server and performs handshake.")
         .def("disconnect", &WsClientWrapper::disconnect, py::call_guard<py::gil_scoped_release>(),

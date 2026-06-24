@@ -78,6 +78,14 @@ SUPPORTED_VERSIONS = _bindings.SUPPORTED_VERSIONS
 ConnectionHdl = _bindings.ConnectionHdl
 CppStream = _bindings.CppStream
 
+# Config
+Config = _bindings.Config
+RateLimitConfig = _bindings.RateLimitConfig
+ConnectionLimitConfig = _bindings.ConnectionLimitConfig
+MessageLimitConfig = _bindings.MessageLimitConfig
+TimeoutConfig = _bindings.TimeoutConfig
+ReservedOpcodes = _bindings.ReservedOpcodes
+
 
 class Stream:
     """A bidirectional, multiplexed data stream over an encrypted WebSocket.
@@ -348,10 +356,15 @@ class Server:
     decorators for handling events.
     """
 
-    def __init__(self):
-        """Initializes the server, generating its long-term signing key."""
+    def __init__(self, config=None):
+        """Initializes the server, generating its long-term signing key.
+
+        Args:
+            config: An optional Config object. If None, default config is used.
+        """
         self._long_term_key = _bindings.Crypto.generate_sign_keypair()
-        self._server = _bindings.WsServer(self._long_term_key)
+        cfg = config if config is not None else _bindings.Config.with_defaults()
+        self._server = _bindings.WsServer(self._long_term_key, cfg)
 
     @property
     def public_key(self):
@@ -575,17 +588,19 @@ class Client:
     Wraps the C++ WsClient for a Pythonic interface with decorators.
     """
 
-    def __init__(self, server_public_key):
+    def __init__(self, server_public_key, config=None):
         """
         Args:
             server_public_key: The public key of the server to connect to.
+            config: An optional Config object. If None, default config is used.
         """
         if not isinstance(server_public_key, _bindings.PublicKey):
             raise TypeError("server_public_key must be a PublicKey object.")
 
         key_view = _bindings.KeyPair()
         key_view.public_key = server_public_key
-        self._client = _bindings.WsClient(key_view)
+        cfg = config if config is not None else _bindings.Config.with_defaults()
+        self._client = _bindings.WsClient(key_view, cfg)
 
     def set_client_identity(self, keypair):
         """Sets the client's Ed25519 identity keypair for authentication.
