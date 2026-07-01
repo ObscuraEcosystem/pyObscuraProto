@@ -25,6 +25,21 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.14'
+        cache: 'pip'
+        cache-dependency-path: |
+          dev-requirements.txt
+          setup.py
+
+    - name: Install ccache
+      run: sudo apt-get install -y ccache
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'src/ObscuraProto/bindings.cpp') }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
 
     - name: Install build dependencies (CMake, etc.)
       run: |
@@ -45,6 +60,8 @@ jobs:
         ruff format --check src/ tests/ examples/
 
     - name: Build and install project
+      env:
+        CMAKE_ARGS: "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
       run: |
         pip install -e .
 

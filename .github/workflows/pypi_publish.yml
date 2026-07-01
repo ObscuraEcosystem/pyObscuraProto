@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+          cache: 'pip'
       - name: Install cibuildwheel
         run: pip install cibuildwheel
       - name: Build wheels
@@ -42,6 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+          cache: 'pip'
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Install cibuildwheel
@@ -63,6 +65,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+          cache: 'pip'
       - name: Install cibuildwheel
         run: pip install cibuildwheel
       - name: Build ARM64 wheels
@@ -87,6 +90,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+          cache: 'pip'
       - name: Build sdist
         run: |
           pip install build
