@@ -20,7 +20,7 @@ sudo apt-get install -y cmake libsodium-dev
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/kretoffer/pyObscuraProto.git
+   git clone https://github.com/ObscuraEcosystem/pyObscuraProto.git
    cd pyObscuraProto
    ```
 

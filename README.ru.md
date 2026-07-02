@@ -1,10 +1,10 @@
 <p align="center">
   <h1>pyObscuraProto</h1>
-  <a href="https://github.com/kretoffer/pyObscuraProto/actions"><img src="https://img.shields.io/github/actions/workflow/status/kretoffer/pyObscuraProto/autotests.yml?style=for-the-badge&logo=github&label=тесты&color=8A2BE2" alt="Tests"></a>
-  <a href="https://github.com/kretoffer/pyObscuraProto/stargazers"><img src="https://img.shields.io/github/stars/kretoffer/pyObscuraProto?style=for-the-badge&logo=githubsponsors&logoColor=FFFFFF&label=звёзды&color=FFD700" alt="Stars"></a>
-  <a href="https://github.com/kretoffer/pyObscuraProto/issues"><img src="https://img.shields.io/github/issues/kretoffer/pyObscuraProto?style=for-the-badge&logo=openbugbounty&logoColor=FFFFFF&label=issues&color=FF6B6B" alt="Issues"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/actions"><img src="https://img.shields.io/github/actions/workflow/status/ObscuraEcosystem/pyObscuraProto/autotests.yml?style=for-the-badge&logo=github&label=тесты&color=8A2BE2" alt="Tests"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/stargazers"><img src="https://img.shields.io/github/stars/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=githubsponsors&logoColor=FFFFFF&label=звёзды&color=FFD700" alt="Stars"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/issues"><img src="https://img.shields.io/github/issues/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=openbugbounty&logoColor=FFFFFF&label=issues&color=FF6B6B" alt="Issues"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/python-3.13%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.13+"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/kretoffer/pyObscuraProto?style=for-the-badge&logo=libreoffice" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=libreoffice" alt="License"></a>
 </p>
 
 Python-обёртка для C++ библиотеки [ObscuraProto](https://github.com/anomalyco/ObscuraProto) — сквозное шифрование поверх WebSocket.
@@ -146,7 +146,7 @@ server.send_to_identity(client_pk, payload)
 identity = server.get_client_identity(hdl)
 ```
 
-Полный пример: [client_identity_example.cpp](https://github.com/kretoffer/ObscuraProto/blob/main/examples/client_identity_example.cpp)
+Полный пример: [client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp)
 
 ## Конфигурация
 
@@ -174,7 +174,7 @@ server = op.Server(config=cfg)
 client = op.Client(server.public_key, config=cfg)
 ```
 
-Или загрузите из YAML-файла (см. [config_example.yml](https://github.com/kretoffer/ObscuraProto/blob/main/config_example.yml)):
+Или загрузите из YAML-файла (см. [config_example.yml](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/config_example.yml)):
 
 ```python
 cfg = op.Config.from_yaml("path/to/config.yml")
@@ -218,7 +218,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | [python_websocket_example.py](examples/python_websocket_example.py) | Минимальный send/response с авто-распаковкой |
 | [request_response_example/](examples/request_response_example/) | Паттерн запрос-ответ (async сервер + клиент) |
 | [streaming_example.py](examples/streaming_example.py) | Двунаправленный стриминг echo |
-| [client_identity_example.cpp](https://github.com/kretoffer/ObscuraProto/blob/main/examples/client_identity_example.cpp) | Анонимная регистрация + аутентифицированная сессия (C++) |
+| [client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp) | Анонимная регистрация + аутентифицированная сессия (C++) |
 
 ## Разработка
 

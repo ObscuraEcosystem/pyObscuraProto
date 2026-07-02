@@ -18,8 +18,8 @@ FetchContent_MakeAvailable(pybind11)
 
 FetchContent_Declare(
     ObscuraProto
-    GIT_REPOSITORY https://github.com/kretoffer/ObscuraProto.git
-    GIT_TAG        main
+    GIT_REPOSITORY https://github.com/ObscuraEcosystem/ObscuraProto.git
+    GIT_TAG        v1.0
 )
 FetchContent_MakeAvailable(ObscuraProto)
 

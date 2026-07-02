@@ -1,10 +1,10 @@
 <p align="center">
   <h1>pyObscuraProto</h1>
-  <a href="https://github.com/kretoffer/pyObscuraProto/actions"><img src="https://img.shields.io/github/actions/workflow/status/kretoffer/pyObscuraProto/autotests.yml?style=for-the-badge&logo=github&label=tests&color=8A2BE2" alt="Tests"></a>
-  <a href="https://github.com/kretoffer/pyObscuraProto/stargazers"><img src="https://img.shields.io/github/stars/kretoffer/pyObscuraProto?style=for-the-badge&logo=githubsponsors&logoColor=FFFFFF&label=stars&color=FFD700" alt="Stars"></a>
-  <a href="https://github.com/kretoffer/pyObscuraProto/issues"><img src="https://img.shields.io/github/issues/kretoffer/pyObscuraProto?style=for-the-badge&logo=openbugbounty&logoColor=FFFFFF&label=issues&color=FF6B6B" alt="Issues"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/actions"><img src="https://img.shields.io/github/actions/workflow/status/ObscuraEcosystem/pyObscuraProto/autotests.yml?style=for-the-badge&logo=github&label=tests&color=8A2BE2" alt="Tests"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/stargazers"><img src="https://img.shields.io/github/stars/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=githubsponsors&logoColor=FFFFFF&label=stars&color=FFD700" alt="Stars"></a>
+  <a href="https://github.com/ObscuraEcosystem/pyObscuraProto/issues"><img src="https://img.shields.io/github/issues/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=openbugbounty&logoColor=FFFFFF&label=issues&color=FF6B6B" alt="Issues"></a>
   <a href="https://www.python.org"><img src="https://img.shields.io/badge/python-3.13%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.13+"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/kretoffer/pyObscuraProto?style=for-the-badge&logo=libreoffice" alt="LICENSE"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ObscuraEcosystem/pyObscuraProto?style=for-the-badge&logo=libreoffice" alt="LICENSE"></a>
 </p>
 
 Python wrapper for the [ObscuraProto](https://github.com/anomalyco/ObscuraProto) C++ library — end-to-end encrypted communication over WebSocket.
@@ -146,7 +146,7 @@ server.send_to_identity(client_pk, payload)
 identity = server.get_client_identity(hdl)
 ```
 
-Full example: [examples/client_identity_example.cpp](https://github.com/kretoffer/ObscuraProto/blob/main/examples/client_identity_example.cpp)
+Full example: [examples/client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp)
 
 ## Configuration
 
@@ -174,7 +174,7 @@ server = op.Server(config=cfg)
 client = op.Client(server.public_key, config=cfg)
 ```
 
-Or load from a YAML file (see [config_example.yml](https://github.com/kretoffer/ObscuraProto/blob/main/config_example.yml)):
+Or load from a YAML file (see [config_example.yml](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/config_example.yml)):
 
 ```python
 cfg = op.Config.from_yaml("path/to/config.yml")
@@ -218,7 +218,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | [python_websocket_example.py](examples/python_websocket_example.py) | Minimal send/response with auto-unpacking |
 | [request_response_example/](examples/request_response_example/) | Request-response pattern (async server + client) |
 | [streaming_example.py](examples/streaming_example.py) | Bidirectional streaming echo |
-| [client_identity_example.cpp](https://github.com/kretoffer/ObscuraProto/blob/main/examples/client_identity_example.cpp) | Anonymous registration + authenticated session (C++) |
+| [client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp) | Anonymous registration + authenticated session (C++) |
 
 ## Development
 
