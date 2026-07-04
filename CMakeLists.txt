@@ -23,5 +23,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ObscuraProto)
 
+target_compile_definitions(obscuraproto INTERFACE _WEBSOCKETPP_CPP11_STL_)
+
 pybind11_add_module(_obscuraproto src/ObscuraProto/bindings.cpp)
 target_link_libraries(_obscuraproto PRIVATE obscuraproto)
