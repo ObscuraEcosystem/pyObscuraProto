@@ -137,6 +137,12 @@ jobs:
 
   publish:
     name: Release & Publish to PyPI
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pyObscuraProto/
+    permissions:
+      id-token: write
+      contents: write
     needs:
       - build_wheels
       - build_linux_aarch64
@@ -166,6 +172,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
