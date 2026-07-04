@@ -1,25 +1,16 @@
 [build-system]
-requires = ["setuptools", "cmake>=3.14"]
+requires = ["setuptools", "cmake>=3.14", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [tool.cibuildwheel]
 build = "cp313-* cp314-*"
-manylinux-x86_64-image = "manylinux2014"
-manylinux-aarch64-image = "manylinux2014"
-
-[tool.cibuildwheel.linux]
-before-all = "yum install -y libsodium-devel"
-
-[tool.cibuildwheel.macos]
-before-all = "brew install libsodium"
+skip = "*-win32 *-manylinux_i686 *-musllinux_i686"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.cibuildwheel.windows]
-before-all = """
-  git clone --depth=1 https://github.com/Microsoft/vcpkg.git vcpkg
-  .\\vcpkg\\bootstrap-vcpkg.bat
-  .\\vcpkg\\vcpkg install libsodium --triplet x64-windows
-  $env:CMAKE_TOOLCHAIN_FILE = "$pwd\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake"
-"""
+
+[tool.setuptools_scm]
 
 [tool.ruff]
 target-version = "py313"

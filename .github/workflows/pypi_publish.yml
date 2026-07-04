@@ -17,7 +17,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-13
+          - macos-26-intel
           - macos-latest
           - windows-latest
     steps:
@@ -27,9 +27,30 @@ jobs:
           python-version: '3.14'
           cache: 'pip'
       - name: Install cibuildwheel
-        run: pip install cibuildwheel
+        run: pip install 'cibuildwheel>=2.16,<3'
+        env:
+          PIP_REQUIRE_VIRTUALENV: false
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_BUILD_VERBOSITY: 2
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: |
+            set -e
+            echo "=== Wheel libraries ==="
+            unzip -l {wheel} | grep '\.dylib\|\.so'
+            echo "=== delocate-listdeps ==="
+            delocate-listdeps {wheel}
+            echo "=== delocate-wheel ==="
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=26
+          CIBW_ENVIRONMENT_WINDOWS: |
+            CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          CIBW_BEFORE_BUILD_MACOS: pip install --upgrade delocate
+          CIBW_BEFORE_BUILD_WINDOWS: |
+            echo "=== CMake version ==="
+            cmake --version
+            echo "=== Generator platform ==="
+            echo CMAKE_GENERATOR_PLATFORM=%CMAKE_GENERATOR_PLATFORM%
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
@@ -47,7 +68,9 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Install cibuildwheel
-        run: pip install cibuildwheel
+        run: pip install 'cibuildwheel>=2.16,<3'
+        env:
+          PIP_REQUIRE_VIRTUALENV: false
       - name: Build aarch64 wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
@@ -66,17 +89,27 @@ jobs:
         with:
           python-version: '3.14'
           cache: 'pip'
+      - name: Set up MSVC ARM64 toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64_arm64
       - name: Install cibuildwheel
-        run: pip install cibuildwheel
+        run: pip install 'cibuildwheel>=2.16,<3'
       - name: Build ARM64 wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
+          CIBW_BUILD_VERBOSITY: 2
           CIBW_ARCHS_WINDOWS: ARM64
-          CIBW_BEFORE_ALL_WINDOWS: >
-            git clone --depth=1 https://github.com/Microsoft/vcpkg.git vcpkg
-            && .\vcpkg\bootstrap-vcpkg.bat
-            && .\vcpkg\vcpkg install libsodium --triplet arm64-windows
-            && $env:CMAKE_TOOLCHAIN_FILE = "$pwd\vcpkg\scripts\buildsystems\vcpkg.cmake"
+          CIBW_ENVIRONMENT_WINDOWS: |
+            CMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+            VCPKG_TARGET_TRIPLET=arm64-windows
+          CIBW_BEFORE_BUILD_WINDOWS: |
+            echo "=== CMake version ==="
+            cmake --version
+            echo "=== Environment ==="
+            set | findstr "CMAKE"
+            echo "=== Generator platform ==="
+            echo CMAKE_GENERATOR_PLATFORM=%CMAKE_GENERATOR_PLATFORM%
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-arm64
@@ -94,7 +127,9 @@ jobs:
       - name: Build sdist
         run: |
           pip install build
-          python -m build --sdist
+          SETUPTOOLS_SCM_PRETEND_VERSION="${GITHUB_REF_NAME#v}" python -m build --sdist
+        env:
+          PIP_REQUIRE_VIRTUALENV: false
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
@@ -119,18 +154,12 @@ jobs:
         with:
           name: sdist
           path: dist
-      - name: Read Changelog
-        id: read_changelog
-        run: |
-          echo 'CHANGELOG<<EOF' >> $GITHUB_OUTPUT
-          cat CHANGELOG.md >> $GITHUB_OUTPUT
-          echo 'EOF' >> $GITHUB_OUTPUT
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          body: ${{ steps.read_changelog.outputs.CHANGELOG }}
+          body_path: CHANGELOG.md
           files: dist/*
           draft: true
         env:

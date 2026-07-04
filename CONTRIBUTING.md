@@ -3,17 +3,16 @@
 ## System Dependencies
 
 - **CMake** (≥ 3.14) — build system
-- **libsodium** — cryptographic library used by ObscuraProto
 
 ### macOS
 ```bash
-brew install cmake libsodium
+brew install cmake
 ```
 
 ### Linux (Debian/Ubuntu)
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake libsodium-dev
+sudo apt-get install -y cmake
 ```
 
 ## Development Setup

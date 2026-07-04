@@ -38,7 +38,7 @@ pip install cmake
 pip install -e .
 ```
 
-Требуется CMake 3.14+, компилятор C++17 и libsodium (`brew install libsodium` на macOS, `apt install libsodium-dev` на Linux).
+Требуется CMake 3.14+ и компилятор C++17.
 
 ## Быстрый старт
 

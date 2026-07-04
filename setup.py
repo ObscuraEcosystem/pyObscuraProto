@@ -59,9 +59,13 @@ class CMakeBuild(build_ext):
         build_args = ["--config", cfg]
 
         if platform.system() == "Windows":
-            cmake_args += ["-T", "ClangCL" if os.environ.get("CC") == "clang" else "MSVC"]
-            if self.compiler.vcruntime:
+            if os.environ.get("CC") == "clang":
+                cmake_args += ["-T", "ClangCL"]
+            if self.compiler is not None and self.compiler.vcruntime:
                 cmake_args += [f"-DCMAKE_GENERATOR_TOOLSET=v{self.compiler.vcruntime}"]
+            generator_platform = os.environ.get("CMAKE_GENERATOR_PLATFORM")
+            if generator_platform:
+                cmake_args += [f"-A{generator_platform}"]
             build_args += ["--", "/m"]
         else:
             build_args += ["--", "-j4"]  # Parallel builds
@@ -81,7 +85,7 @@ class CMakeBuild(build_ext):
 
 setup(
     name="pyObscuraProto",
-    version="1.0",  # Placeholder version
+    use_scm_version=True,
     author="Kretov Artem",
     author_email="20kretovartem000@gmail.com",
     description="A Python wrapper for ObscuraProto",
@@ -92,6 +96,6 @@ setup(
     ext_modules=[CMakeExtension("ObscuraProto._obscuraproto", sourcedir=".")],
     cmdclass={"build_ext": CMakeBuild},
     python_requires=">=3.13",
-    install_requires=["pybind11>=2.11.1"],
+    install_requires=[],
     zip_safe=False,
 )
