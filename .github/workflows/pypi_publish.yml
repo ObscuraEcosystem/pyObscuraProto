@@ -167,7 +167,6 @@ jobs:
           name: Release ${{ github.ref_name }}
           body_path: CHANGELOG.md
           files: dist/*
-          draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to PyPI
