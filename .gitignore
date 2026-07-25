@@ -208,3 +208,7 @@ __marimo__/
 
 # Other
 server_public_key.pem
+
+#IDE
+.vscode
+.DS_Store
