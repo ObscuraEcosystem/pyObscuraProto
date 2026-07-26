@@ -345,6 +345,18 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("sync_request_to_identity", &WsServerWrapper::sync_request_to_identity,
              py::call_guard<py::gil_scoped_release>(),
              "Sends a synchronous request to a specific client identified by their public key.")
+        .def("set_on_open_callback", [](WsServerWrapper &self,
+                                        std::function<void(WsConnectionHdlWrapper)> callback) {
+            self.set_on_open_callback([callback](WsConnectionHdl hdl) {
+                callback(WsConnectionHdlWrapper{hdl});
+            });
+        }, "Registers a callback called when a new WebSocket connection is opened.")
+        .def("set_on_close_callback", [](WsServerWrapper &self,
+                                         std::function<void(WsConnectionHdlWrapper)> callback) {
+            self.set_on_close_callback([callback](WsConnectionHdl hdl) {
+                callback(WsConnectionHdlWrapper{hdl});
+            });
+        }, "Registers a callback called when a WebSocket connection is closed.")
         .def("send_response", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, uint32_t request_id, const Payload &payload) {
             self.send_response(hdl.hdl, request_id, payload);
         }, "Sends a response to a specific request.");

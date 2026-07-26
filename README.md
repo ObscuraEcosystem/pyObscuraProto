@@ -18,6 +18,7 @@ Python wrapper for the [ObscuraProto](https://github.com/anomalyco/ObscuraProto)
 - **Auto-unpacking** — payload parameters are unpacked automatically based on Python type hints
 - **Bidirectional streaming** — multiplexed data streams over a single encrypted connection
 - **Anonymous & authenticated sessions** — handle clients with or without identity; identity verification callbacks
+- **Connection lifecycle callbacks** — `@server.on_open` / `@server.on_close` for tracking connect and disconnect events
 - **Configuration system** — rate limits, connection limits, message size limits, timeouts; load from YAML or set from Python
 - **Fully typed** — complete Python type annotations; checked with pyright
 - **High performance** — C++ core via pybind11, GIL released during I/O
@@ -199,7 +200,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 
 | Class / Function | Description |
 |---|---|
-| `Server` | Encrypted WebSocket server. Decorators: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity` |
+| `Server` | Encrypted WebSocket server. Decorators: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
 | `Client(server_pk)` | Encrypted WebSocket client. Decorators: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream` |
 | `Stream` | Bidirectional data stream. Decorators: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()` |
 | `PayloadBuilder(opcode)` | Build binary payloads. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |

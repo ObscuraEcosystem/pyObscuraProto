@@ -386,6 +386,30 @@ class Server:
         self._server.stop()
         print("[PY-SERVER] Stopped.")
 
+    def on_open(self, handler):
+        """Decorator to register a callback for when a new WebSocket connection is opened.
+
+        The decorated function receives a ConnectionHdl::
+
+            @server.on_open
+            def on_connection_open(hdl):
+                print(f"New connection: {hdl}")
+        """
+        self._server.set_on_open_callback(handler)
+        return handler
+
+    def on_close(self, handler):
+        """Decorator to register a callback for when a WebSocket connection is closed.
+
+        The decorated function receives a ConnectionHdl::
+
+            @server.on_close
+            def on_connection_close(hdl):
+                print(f"Connection closed: {hdl}")
+        """
+        self._server.set_on_close_callback(handler)
+        return handler
+
     def send(self, hdl, payload):
         """Sends a payload to a specific client."""
         self._server.send(hdl, payload)

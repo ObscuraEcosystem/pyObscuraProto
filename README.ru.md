@@ -18,6 +18,7 @@ Python-обёртка для C++ библиотеки [ObscuraProto](https://git
 - **Автоматическая распаковка** — параметры payload'а распаковываются по type hints Python
 - **Двунаправленный стриминг** — мультиплексированные потоки данных поверх одного зашифрованного соединения
 - **Анонимные и аутентифицированные сессии** — обработка клиентов с/без identity; коллбэки верификации
+- **Коллбэки жизненного цикла соединения** — `@server.on_open` / `@server.on_close` для отслеживания подключения и отключения клиентов
 - **Система конфигурации** — лимиты скорости, соединений, размера сообщений, таймауты; загрузка из YAML или настройка из Python
 - **Полная типизация** — все аннотации типов Python, проверка через pyright
 - **Высокая производительность** — C++ ядро через pybind11, GIL освобождается во время I/O
@@ -199,7 +200,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 
 | Класс / Функция | Описание |
 |---|---|
-| `Server` | Зашифрованный WebSocket-сервер. Декораторы: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity` |
+| `Server` | Зашифрованный WebSocket-сервер. Декораторы: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
 | `Client(server_pk)` | Зашифрованный WebSocket-клиент. Декораторы: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream` |
 | `Stream` | Двунаправленный поток данных. Декораторы: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()` |
 | `PayloadBuilder(opcode)` | Сборка бинарных payload'ов. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
