@@ -153,6 +153,7 @@ def test_server_with_default_config(crypto_init):
 def test_server_with_custom_config(crypto_init, capsys):
     """Test server with strict rate limits."""
     cfg = op.Config()
+    cfg.supported_versions = [op.V1_1, op.V1_0]
     cfg.rate_limit.messages_per_second = 1000
     cfg.timeouts.handshake_ms = 30000
     cfg.timeouts.idle_ms = 600000
@@ -180,6 +181,7 @@ def test_server_with_custom_config(crypto_init, capsys):
 def test_config_with_message_limit(crypto_init, capsys):
     """Test server with strict message size limit."""
     cfg = op.Config()
+    cfg.supported_versions = [op.V1_1, op.V1_0]
     cfg.message_limits.max_decrypted_payload = 100
 
     server = op.Server(config=cfg)
@@ -217,6 +219,7 @@ def test_config_with_message_limit(crypto_init, capsys):
 def test_config_with_timeouts_disabled(crypto_init, capsys):
     """Test server with timeouts disabled."""
     cfg = op.Config()
+    cfg.supported_versions = [op.V1_1, op.V1_0]
     cfg.timeouts.enabled = False
 
     server = op.Server(config=cfg)
@@ -242,6 +245,7 @@ def test_config_with_timeouts_disabled(crypto_init, capsys):
 def test_config_all_limits_disabled(crypto_init, capsys):
     """Test server with all rate/message/timeout limits disabled."""
     cfg = op.Config()
+    cfg.supported_versions = [op.V1_1, op.V1_0]
     cfg.rate_limit.enabled = False
     cfg.connection_limits.enabled = False
     cfg.message_limits.enabled = False

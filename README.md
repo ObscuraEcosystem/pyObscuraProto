@@ -105,6 +105,54 @@ client.connect("ws://localhost:9006")
 
 Full example: [examples/streaming_example.py](examples/streaming_example.py)
 
+### Stream Properties
+
+The `Stream` class provides several useful properties:
+
+```python
+# Get the stream's op code (if set)
+op_code = stream.op_code  # Returns int or None
+```
+
+### Starting Streams with Custom Op Codes
+
+Both `Server.start_stream()` and `Client.start_stream()` accept an optional `stream_op_code` parameter:
+
+```python
+# Server starts a stream with a specific op code
+stream = server.start_stream(hdl, stream_op_code=0x3001)
+
+# Client starts a stream with a specific op code
+stream = client.start_stream(stream_op_code=0x3001)
+```
+
+### Handling Streams by Op Code
+
+Use decorators to handle streams with specific op codes:
+
+```python
+# Server handles authenticated streams with specific op codes
+@server.on_stream(0x3001)
+def handle_stream_3001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"Received on stream 0x3001: {data}")
+
+# Server handles anonymous streams with specific op codes
+@server.on_anon_stream(0x4001)
+def handle_anon_stream_4001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"Received anonymous on stream 0x4001: {data}")
+
+# Client handles incoming streams from server with specific op codes
+@client.on_stream(0x3001)
+def handle_incoming_stream_3001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"Received from server on stream 0x3001: {data}")
+```
+
 ## Anonymous & Authenticated Sessions
 
 Clients connecting **without** an identity key are treated as **anonymous** — their messages are routed through anonymous handlers. Clients that present a verified Ed25519 identity key are **authenticated** and use the regular handlers.
@@ -171,6 +219,9 @@ cfg.message_limits.max_decrypted_payload = 65535
 cfg.timeouts.idle_ms = 600000      # 10 min idle disconnect
 cfg.timeouts.handshake_ms = 15000  # 15 sec handshake timeout
 
+# Protocol versions to support (default: [V1_0, V1_1])
+cfg.supported_versions = [op.V1_0, op.V1_1]
+
 server = op.Server(config=cfg)
 client = op.Client(server.public_key, config=cfg)
 ```
@@ -200,17 +251,19 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 
 | Class / Function | Description |
 |---|---|
-| `Server` | Encrypted WebSocket server. Decorators: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
-| `Client(server_pk)` | Encrypted WebSocket client. Decorators: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream` |
-| `Stream` | Bidirectional data stream. Decorators: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()` |
+| `Server` | Encrypted WebSocket server. Decorators: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)`, `@on_anon_stream(opcode)`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
+| `Client(server_pk)` | Encrypted WebSocket client. Decorators: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)` |
+| `Stream` | Bidirectional data stream. Decorators: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()`. Properties: `stream_id`, `op_code` |
 | `PayloadBuilder(opcode)` | Build binary payloads. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
 | `PayloadReader(payload)` | Read binary payloads. `read_string()`, `read_int()`, `read_uint()`, `read_bool()`, `read_float()`, `read_bytes()` |
 | `Payload` | Raw payload with `.op_code` and `.parameters`. Has `.serialize()` / `Payload.deserialize()` |
 | `uint` | Type hint marker: `def handler(value: uint)` reads the parameter as unsigned |
-| `Config` | Server/client configuration. Sub-structs: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`. Methods: `from_yaml(path)`, `with_defaults()` |
+| `Config` | Server/client configuration. Sub-structs: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`, `supported_versions`. Methods: `from_yaml(path)`, `with_defaults()` |
 | `Crypto` | Static crypto: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` |
 | `KeyPair` / `PublicKey` / `PrivateKey` | Key types with `.data` field |
 | `ConnectionHdl` | Opaque connection handle for targeting specific clients |
+| `V1_0`, `V1_1` | Protocol version constants |
+| `SUPPORTED_VERSIONS` | Default supported protocol versions constant |
 
 ## Examples
 

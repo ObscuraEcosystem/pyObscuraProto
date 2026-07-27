@@ -36,6 +36,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
 
     // Version
     m.attr("V1_0") = py::int_(Versions::V1_0);
+    m.attr("V1_1") = py::int_(Versions::V1_1);
     m.attr("SUPPORTED_VERSIONS") = py::cast(SUPPORTED_VERSIONS);
 
     py::class_<VersionNegotiator>(m, "VersionNegotiator")
@@ -89,6 +90,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def_readwrite("message_limits", &Config::message_limits)
         .def_readwrite("timeouts", &Config::timeouts)
         .def_readwrite("opcodes", &Config::opcodes)
+        .def_readwrite("supported_versions", &Config::supported_versions)
         .def_static("from_yaml", &Config::from_yaml)
         .def_static("with_defaults", &Config::with_defaults);
 
@@ -233,10 +235,13 @@ PYBIND11_MODULE(_obscuraproto, m) {
     
     // Stream
     py::class_<Stream, std::shared_ptr<Stream>>(m, "CppStream")
-        .def(py::init<uint32_t, std::function<void(Payload)>>(),
-             "Constructor (stream_id, send_fn) - for testing. Use start_stream() in production.")
+        .def(py::init<uint32_t, std::function<void(Payload)>, std::optional<Payload::OpCode>>(),
+             py::arg("stream_id"), py::arg("send_fn"), py::arg("op_code") = std::nullopt,
+             "Constructor (stream_id, send_fn, op_code) - for testing. Use start_stream() in production.")
         .def("get_stream_id", &Stream::get_stream_id,
              "Returns the stream's unique ID.")
+        .def("get_op_code", &Stream::get_op_code,
+             "Returns the stream's optional op_code.")
         .def("write", [](Stream &self, const std::string &data) {
             byte_vector vec(reinterpret_cast<const uint8_t*>(data.data()),
                             reinterpret_cast<const uint8_t*>(data.data() + data.size()));
@@ -301,11 +306,27 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("start_stream", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl) {
             return self.start_stream(hdl.hdl);
         }, py::call_guard<py::gil_scoped_release>(),
+             py::arg("hdl"),
              "Start a new outgoing stream to a specific client.")
+        .def("start_stream", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, Payload::OpCode stream_op_code) {
+            return self.start_stream(hdl.hdl, stream_op_code);
+        }, py::call_guard<py::gil_scoped_release>(),
+             py::arg("hdl"), py::arg("stream_op_code"),
+             "Start a new outgoing stream to a specific client with a specific op_code.")
         .def("register_incoming_stream_handler", [](WsServerWrapper &self,
             std::function<void(std::shared_ptr<Stream>)> callback) {
             self.register_incoming_stream_handler(std::move(callback));
         }, "Register a handler for incoming streams from clients.")
+        .def("register_stream_handler", [](WsServerWrapper &self, Payload::OpCode op_code,
+            std::function<void(std::shared_ptr<Stream>)> callback) {
+            self.register_stream_handler(op_code, std::move(callback));
+        }, py::arg("op_code"), py::arg("callback"),
+             "Register a handler for incoming authenticated streams with a specific op_code.")
+        .def("register_anon_stream_handler", [](WsServerWrapper &self, Payload::OpCode op_code,
+            std::function<void(std::shared_ptr<Stream>)> callback) {
+            self.register_anon_stream_handler(op_code, std::move(callback));
+        }, py::arg("op_code"), py::arg("callback"),
+             "Register a handler for incoming anonymous streams with a specific op_code.")
 
         // --- Anonymous Sessions ---
         .def("send_anonymous", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload) {
@@ -382,8 +403,16 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("set_default_payload_handler", &WsClientWrapper::set_default_payload_handler)
         .def("send_response", &WsClientWrapper::send_response,
              "Sends a response to a specific server-initiated request.")
-        .def("start_stream", &WsClientWrapper::start_stream, py::call_guard<py::gil_scoped_release>(),
+        .def("start_stream", py::overload_cast<>(&WsClientWrapper::start_stream),
+             py::call_guard<py::gil_scoped_release>(),
              "Start a new outgoing stream to the server.")
+        .def("start_stream", py::overload_cast<Payload::OpCode>(&WsClientWrapper::start_stream),
+             py::call_guard<py::gil_scoped_release>(),
+             py::arg("stream_op_code"),
+             "Start a new outgoing stream to the server with a specific op_code.")
         .def("register_incoming_stream_handler", &WsClientWrapper::register_incoming_stream_handler,
-             "Register a handler for incoming streams from the server.");
+             "Register a handler for incoming streams from the server.")
+        .def("register_stream_handler", &WsClientWrapper::register_stream_handler,
+             py::arg("op_code"), py::arg("callback"),
+             "Register a handler for incoming streams with a specific op_code.");
 }

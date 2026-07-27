@@ -105,6 +105,52 @@ client.connect("ws://localhost:9006")
 
 Полный пример: [examples/streaming_example.py](examples/streaming_example.py)
 
+### Свойства Stream
+
+```python
+# Получить op_code стрима (если задан)
+op_code = stream.op_code  # Возвращает int или None
+```
+
+### Запуск стримов с произвольным Op Code
+
+`Server.start_stream()` и `Client.start_stream()` принимают опциональный параметр `stream_op_code`:
+
+```python
+# Сервер запускает стрим с op_code
+stream = server.start_stream(hdl, stream_op_code=0x3001)
+
+# Клиент запускает стрим с op_code
+stream = client.start_stream(stream_op_code=0x3001)
+```
+
+### Обработка стримов по Op Code
+
+Используйте декораторы для обработки стримов с определёнными op_code:
+
+```python
+# Сервер: аутентифицированные стримы с op_code
+@server.on_stream(0x3001)
+def handle_stream_3001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"Получено на стриме 0x3001: {data}")
+
+# Сервер: анонимные стримы с op_code
+@server.on_anon_stream(0x4001)
+def handle_anon_stream_4001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"Анонимный стрим 0x4001: {data}")
+
+# Клиент: входящие стримы от сервера с op_code
+@client.on_stream(0x3001)
+def handle_incoming_stream_3001(stream: op.Stream):
+    @stream.on_data
+    def on_data(data: bytes):
+        print(f"От сервера на стриме 0x3001: {data}")
+```
+
 ## Анонимные и аутентифицированные сессии
 
 Клиенты, подключающиеся **без** identity-ключа, считаются **анонимными** — их сообщения обрабатываются через анонимные хендлеры. Клиенты с подтверждённым Ed25519 identity считаются **аутентифицированными** и используют обычные хендлеры.
@@ -171,6 +217,9 @@ cfg.message_limits.max_decrypted_payload = 65535
 cfg.timeouts.idle_ms = 600000      # 10 мин бездействия
 cfg.timeouts.handshake_ms = 15000  # 15 сек на handshake
 
+# Версии протокола (по умолчанию: [V1_1, V1_0])
+cfg.supported_versions = [op.V1_1, op.V1_0]
+
 server = op.Server(config=cfg)
 client = op.Client(server.public_key, config=cfg)
 ```
@@ -195,22 +244,25 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | `timeouts.handshake_ms` | `10000` | Таймаут handshake (мс) |
 | `timeouts.idle_ms` | `300000` | Таймаут бездействия (мс) |
 | `timeouts.check_interval_ms` | `5000` | Интервал проверки таймаутов (мс) |
+| `supported_versions` | `[0x0101, 0x0100]` | Поддерживаемые версии протокола (V1_1 предпочтительнее) |
 
 ## Справочник API
 
 | Класс / Функция | Описание |
 |---|---|
-| `Server` | Зашифрованный WebSocket-сервер. Декораторы: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
-| `Client(server_pk)` | Зашифрованный WebSocket-клиент. Декораторы: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream` |
-| `Stream` | Двунаправленный поток данных. Декораторы: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()` |
+| `Server` | Зашифрованный WebSocket-сервер. Декораторы: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)`, `@on_anon_stream(opcode)`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
+| `Client(server_pk)` | Зашифрованный WebSocket-клиент. Декораторы: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)` |
+| `Stream` | Двунаправленный поток данных. Декораторы: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()`. Свойства: `stream_id`, `op_code` |
 | `PayloadBuilder(opcode)` | Сборка бинарных payload'ов. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
 | `PayloadReader(payload)` | Чтение бинарных payload'ов. `read_string()`, `read_int()`, `read_uint()`, `read_bool()`, `read_float()`, `read_bytes()` |
 | `Payload` | Сырой payload с полями `.op_code` и `.parameters`. Есть `.serialize()` / `Payload.deserialize()` |
 | `uint` | Маркер типа: `def handler(value: uint)` читает параметр как беззнаковое целое |
-| `Config` | Конфигурация сервера/клиента. Подструктуры: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`. Методы: `from_yaml(path)`, `with_defaults()` |
+| `Config` | Конфигурация сервера/клиента. Подструктуры: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`, `supported_versions`. Методы: `from_yaml(path)`, `with_defaults()` |
 | `Crypto` | Статические криптооперации: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` |
 | `KeyPair` / `PublicKey` / `PrivateKey` | Типы ключей с полем `.data` |
 | `ConnectionHdl` | Непрозрачный идентификатор соединения для адресации конкретных клиентов |
+| `V1_0`, `V1_1` | Константы версий протокола |
+| `SUPPORTED_VERSIONS` | Константа с версиями протокола по умолчанию |
 
 ## Примеры
 
@@ -219,6 +271,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | [python_websocket_example.py](examples/python_websocket_example.py) | Минимальный send/response с авто-распаковкой |
 | [request_response_example/](examples/request_response_example/) | Паттерн запрос-ответ (async сервер + клиент) |
 | [streaming_example.py](examples/streaming_example.py) | Двунаправленный стриминг echo |
+| [stream_opcode_example.py](examples/stream_opcode_example.py) | Стриминг с op_code — два логических канала |
 | [client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp) | Анонимная регистрация + аутентифицированная сессия (C++) |
 
 ## Разработка

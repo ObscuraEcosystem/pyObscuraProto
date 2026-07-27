@@ -74,6 +74,7 @@ KeyPair = _bindings.KeyPair
 PublicKey = _bindings.PublicKey
 PrivateKey = _bindings.PrivateKey
 V1_0 = _bindings.V1_0
+V1_1 = _bindings.V1_1
 SUPPORTED_VERSIONS = _bindings.SUPPORTED_VERSIONS
 ConnectionHdl = _bindings.ConnectionHdl
 CppStream = _bindings.CppStream
@@ -104,6 +105,11 @@ class Stream:
     def stream_id(self) -> int:
         """Unique stream identifier."""
         return self._s.get_stream_id()
+
+    @property
+    def op_code(self):
+        """The stream's op code, or None if not set."""
+        return self._s.get_op_code()
 
     # --- Synchronous I/O (use inside C++ callbacks) ---
 
@@ -418,8 +424,12 @@ class Server:
         """Sends a request to a specific client and returns a future for the response."""
         return await asyncio.to_thread(self._server.sync_request, hdl, payload)
 
-    def start_stream(self, hdl):
+    def start_stream(self, hdl, stream_op_code=None):
         """Starts a new outgoing stream to a specific client.
+
+        Args:
+            hdl: Connection handle of the target client.
+            stream_op_code: Optional op_code for the stream.
 
         Returns a :class:`Stream` that can be used to write data.
 
@@ -427,12 +437,25 @@ class Server:
             stream = server.start_stream(hdl)
             stream.write(b"hello")
             stream.end()
+
+            # With op_code:
+            stream = server.start_stream(hdl, 0x3001)
         """
+        if stream_op_code is not None:
+            return Stream(self._server.start_stream(hdl, stream_op_code))
         return Stream(self._server.start_stream(hdl))
 
-    async def async_start_stream(self, hdl):
-        """Async version of :meth:`start_stream` — does not block the event loop."""
-        cpp_stream = await asyncio.to_thread(self._server.start_stream, hdl)
+    async def async_start_stream(self, hdl, stream_op_code=None):
+        """Async version of :meth:`start_stream` — does not block the event loop.
+
+        Args:
+            hdl: Connection handle of the target client.
+            stream_op_code: Optional op_code for the stream.
+        """
+        if stream_op_code is not None:
+            cpp_stream = await asyncio.to_thread(self._server.start_stream, hdl, stream_op_code)
+        else:
+            cpp_stream = await asyncio.to_thread(self._server.start_stream, hdl)
         return Stream(cpp_stream)
 
     def on_incoming_stream(self, handler):
@@ -452,6 +475,56 @@ class Server:
 
         self._server.register_incoming_stream_handler(wrapper)
         return handler
+
+    def on_stream(self, op_code):
+        """Decorator to register a handler for incoming authenticated streams
+        with a specific op_code.
+
+        The decorated function receives a :class:`Stream`::
+
+            @server.on_stream(0x3001)
+            def handle_stream(stream: Stream):
+                @stream.on_data
+                def on_data(data: bytes):
+                    print(f"Received: {data}")
+
+        Args:
+            op_code: The op_code of streams to handle.
+        """
+
+        def decorator(handler):
+            def wrapper(cpp_stream):
+                handler(Stream(cpp_stream))
+
+            self._server.register_stream_handler(op_code, wrapper)
+            return handler
+
+        return decorator
+
+    def on_anon_stream(self, op_code):
+        """Decorator to register a handler for incoming anonymous streams
+        with a specific op_code.
+
+        The decorated function receives a :class:`Stream`::
+
+            @server.on_anon_stream(0x4001)
+            def handle_anon_stream(stream: Stream):
+                @stream.on_data
+                def on_data(data: bytes):
+                    print(f"Received: {data}")
+
+        Args:
+            op_code: The op_code of anonymous streams to handle.
+        """
+
+        def decorator(handler):
+            def wrapper(cpp_stream):
+                handler(Stream(cpp_stream))
+
+            self._server.register_anon_stream_handler(op_code, wrapper)
+            return handler
+
+        return decorator
 
     def on_payload(self, opcode):
         """
@@ -663,8 +736,11 @@ class Client:
         """Sends a request to the server and returns a future for the response."""
         return await asyncio.to_thread(self._client.sync_request, payload)
 
-    def start_stream(self):
+    def start_stream(self, stream_op_code=None):
         """Starts a new outgoing stream to the server.
+
+        Args:
+            stream_op_code: Optional op_code for the stream.
 
         Returns a :class:`Stream` that can be used to write data.
 
@@ -672,12 +748,24 @@ class Client:
             stream = client.start_stream()
             stream.write(b"hello")
             stream.end()
+
+            # With op_code:
+            stream = client.start_stream(0x3001)
         """
+        if stream_op_code is not None:
+            return Stream(self._client.start_stream(stream_op_code))
         return Stream(self._client.start_stream())
 
-    async def async_start_stream(self):
-        """Async version of :meth:`start_stream` — does not block the event loop."""
-        cpp_stream = await asyncio.to_thread(self._client.start_stream)
+    async def async_start_stream(self, stream_op_code=None):
+        """Async version of :meth:`start_stream` — does not block the event loop.
+
+        Args:
+            stream_op_code: Optional op_code for the stream.
+        """
+        if stream_op_code is not None:
+            cpp_stream = await asyncio.to_thread(self._client.start_stream, stream_op_code)
+        else:
+            cpp_stream = await asyncio.to_thread(self._client.start_stream)
         return Stream(cpp_stream)
 
     def on_incoming_stream(self, handler):
@@ -697,6 +785,31 @@ class Client:
 
         self._client.register_incoming_stream_handler(wrapper)
         return handler
+
+    def on_stream(self, op_code):
+        """Decorator to register a handler for incoming streams from the server
+        with a specific op_code.
+
+        The decorated function receives a :class:`Stream`::
+
+            @client.on_stream(0x3001)
+            def handle_stream(stream: Stream):
+                @stream.on_data
+                def on_data(data: bytes):
+                    print(f"Received: {data}")
+
+        Args:
+            op_code: The op_code of streams to handle.
+        """
+
+        def decorator(handler):
+            def wrapper(cpp_stream):
+                handler(Stream(cpp_stream))
+
+            self._client.register_stream_handler(op_code, wrapper)
+            return handler
+
+        return decorator
 
     def on_ready(self, handler):
         """Decorator to register a callback for when the client is connected and ready."""
