@@ -1,3 +1,12 @@
+### 1.2.0
+- Added full-cycle integration tests ported from ObscuraProto C++ tests (32 tests across 6 files in `tests/integration/`):
+  - `test_anonymous.py` (6 tests) — anonymous session op/request/stream handlers
+  - `test_authenticated.py` (5 tests) — authenticated session with identity
+  - `test_full_cycle.py` (2 tests) — V1.0 and V1.1 full cycle with anon + auth clients
+  - `test_server_edge.py` (9 tests) — stream lifecycle, sync requests, limits, timeouts
+  - `test_stream_routing.py` (6 tests) — op_code routing, fallback, server-initiated streams
+  - `test_version_config.py` (4 tests) — version negotiation edge cases
+
 ### 1.1.0
 - Underlying C++ library updated to v1.1.0 (OpCode-routed streams, configurable protocol versions).
 - Added `V1_1` constant and updated `SUPPORTED_VERSIONS` to include V1_1 as preferred.
