@@ -420,6 +420,10 @@ class Server:
         """Sends a payload to a specific client."""
         self._server.send(hdl, payload)
 
+    def sync_request(self, hdl, payload) -> Payload:
+        """Sends a synchronous request to a specific client and returns the response."""
+        return self._server.sync_request(hdl, payload)
+
     async def async_request(self, hdl, payload) -> Payload:
         """Sends a request to a specific client and returns a future for the response."""
         return await asyncio.to_thread(self._server.sync_request, hdl, payload)
@@ -731,6 +735,10 @@ class Client:
     def send(self, payload):
         """Sends a payload to the server."""
         self._client.send(payload)
+
+    def sync_request(self, payload) -> Payload:
+        """Sends a synchronous request to the server and returns the response."""
+        return self._client.sync_request(payload)
 
     async def async_request(self, payload) -> Payload:
         """Sends a request to the server and returns a future for the response."""

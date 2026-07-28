@@ -162,7 +162,7 @@ def test_full_cycle_v1_1(crypto_init, capsys):
         def do_server_actions():
             try:
                 # Server-initiated sync request
-                resp = server._server.sync_request(
+                resp = server.sync_request(
                     hdl,
                     op.PayloadBuilder(OP_PING).add_param("srv_req").build(),
                 )
@@ -244,7 +244,7 @@ def test_full_cycle_v1_1(crypto_init, capsys):
         assert anon_op_done.wait(timeout=5), "Anon op handler did not fire"
 
         # Anon sync request
-        anon_resp = anon_client._client.sync_request(op.PayloadBuilder(OP_PING).add_param("anon_req").build())
+        anon_resp = anon_client.sync_request(op.PayloadBuilder(OP_PING).add_param("anon_req").build())
         assert anon_resp.op_code == OP_PING
         anon_reader = op.PayloadReader(anon_resp)
         anon_val = anon_reader.read_string()
@@ -270,7 +270,7 @@ def test_full_cycle_v1_1(crypto_init, capsys):
         assert auth_op_done.wait(timeout=5), "Auth op handler did not fire"
 
         # Auth sync request
-        auth_resp = auth_client._client.sync_request(op.PayloadBuilder(OP_PING).add_param("auth_req").build())
+        auth_resp = auth_client.sync_request(op.PayloadBuilder(OP_PING).add_param("auth_req").build())
         assert auth_resp.op_code == OP_PING
         auth_reader = op.PayloadReader(auth_resp)
         auth_val = auth_reader.read_string()
@@ -408,7 +408,7 @@ def test_full_cycle_v1_0(crypto_init, capsys):
 
         def do_server_actions():
             try:
-                resp = server._server.sync_request(
+                resp = server.sync_request(
                     hdl,
                     op.PayloadBuilder(OP_PING).add_param("srv_req").build(),
                 )
@@ -494,7 +494,7 @@ def test_full_cycle_v1_0(crypto_init, capsys):
         assert anon_op_done.wait(timeout=5), "Anon op handler did not fire"
 
         # Anon sync request
-        anon_resp = anon_client._client.sync_request(op.PayloadBuilder(OP_PING).add_param("v1.0_anon_req").build())
+        anon_resp = anon_client.sync_request(op.PayloadBuilder(OP_PING).add_param("v1.0_anon_req").build())
         assert anon_resp.op_code == OP_PING
         anon_reader = op.PayloadReader(anon_resp)
         anon_val = anon_reader.read_string()
@@ -516,7 +516,7 @@ def test_full_cycle_v1_0(crypto_init, capsys):
         assert auth_op_done.wait(timeout=5), "Auth op handler did not fire"
 
         # Auth sync request
-        auth_resp = auth_client._client.sync_request(op.PayloadBuilder(OP_PING).add_param("v1.0_auth_req").build())
+        auth_resp = auth_client.sync_request(op.PayloadBuilder(OP_PING).add_param("v1.0_auth_req").build())
         assert auth_resp.op_code == OP_PING
         auth_reader = op.PayloadReader(auth_resp)
         auth_val = auth_reader.read_string()

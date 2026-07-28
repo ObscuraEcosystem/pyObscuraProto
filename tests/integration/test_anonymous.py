@@ -119,7 +119,7 @@ def test_anon_sync_request(crypto_init, capsys):
         client.connect(f"ws://localhost:{port}")
         assert client_ready.wait(timeout=5), "Client did not become ready"
 
-        response = client._client.sync_request(op.PayloadBuilder(OP_ECHO).add_param("world").build())
+        response = client.sync_request(op.PayloadBuilder(OP_ECHO).add_param("world").build())
         assert response.op_code == OP_ECHO, f"Expected OP_ECHO, got 0x{response.op_code:04x}"
         reader = op.PayloadReader(response)
         val = reader.read_string()
@@ -167,7 +167,7 @@ def test_anon_async_request(crypto_init, capsys):
         assert client_ready.wait(timeout=5), "Client did not become ready"
 
         # Use synchronous request (Python bindings don't have native async_request)
-        response = client._client.sync_request(op.PayloadBuilder(OP_ECHO).add_param("async").build())
+        response = client.sync_request(op.PayloadBuilder(OP_ECHO).add_param("async").build())
         assert response.op_code == OP_ECHO, f"Expected OP_ECHO, got 0x{response.op_code:04x}"
         reader = op.PayloadReader(response)
         val = reader.read_string()
@@ -205,7 +205,7 @@ def test_anon_server_initiated_request(crypto_init, capsys):
 
         def do_request():
             try:
-                resp = server._server.sync_request(
+                resp = server.sync_request(
                     hdl,
                     op.PayloadBuilder(OP_SERVER_REQUEST).add_param("req from server").build(),
                 )

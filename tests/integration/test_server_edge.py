@@ -173,7 +173,7 @@ def test_server_sync_request(crypto_init, capsys):
     def handle_ping(hdl: op.ConnectionHdl, payload: op.Payload):
         def do_request():
             try:
-                resp = server._server.sync_request(
+                resp = server.sync_request(
                     hdl,
                     op.PayloadBuilder(OP_PING).add_param("server sync").build(),
                 )
@@ -246,7 +246,7 @@ def test_server_request_to_identity(crypto_init, capsys):
         def do_requests():
             try:
                 # Sync request to identity
-                sync_resp = server._server.sync_request_to_identity(
+                sync_resp = server.sync_request_to_identity(
                     client_identity_kp.public_key,
                     op.PayloadBuilder(OP_PING).add_param("sync to id").build(),
                 )
