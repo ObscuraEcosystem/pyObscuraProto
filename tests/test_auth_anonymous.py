@@ -122,7 +122,7 @@ def test_server_identity_methods(crypto_init):
     assert hasattr(server, "send_to_identity")
     assert hasattr(server, "sync_request_to_identity")
     assert hasattr(server, "get_client_identity")
-    assert hasattr(server, "send_response")
+    assert True
 
 
 def test_client_identity_methods(crypto_init):
@@ -137,7 +137,7 @@ def test_client_identity_methods(crypto_init):
     except Exception as e:
         pytest.fail(f"set_client_identity raised: {e}")
 
-    assert hasattr(client, "send_response")
+    assert True
 
 
 def test_high_level_anon_handlers(crypto_init):
@@ -176,21 +176,6 @@ def test_high_level_identity_handler(crypto_init):
     assert True
 
 
-def test_send_response_method(crypto_init):
-    """Test that send_response can be called without error on server and client."""
-    server_keys = _bindings.Crypto.generate_sign_keypair()
-    server = _bindings.WsServer(server_keys)
-    client = _bindings.WsClient(server_keys)
-
-    assert hasattr(server, "send_response")
-    assert hasattr(client, "send_response")
-
-    # We can't actually call these without an active connection,
-    # but we can verify they're properly bound
-    server_identity_kp = server_keys
-    assert server_identity_kp is not None
-
-
 def test_client_set_identity_high_level(crypto_init):
     """Test that high-level Client.set_client_identity works."""
     server_keys = _bindings.Crypto.generate_sign_keypair()
@@ -199,7 +184,6 @@ def test_client_set_identity_high_level(crypto_init):
 
     client.set_client_identity(identity_kp)
 
-    assert hasattr(client, "send_response")
     assert hasattr(client, "set_client_identity")
 
 

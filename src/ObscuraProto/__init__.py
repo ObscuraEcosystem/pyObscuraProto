@@ -2,12 +2,124 @@
 ObscuraProto high-level Python library.
 """
 
-import asyncio  # Added for asyncio integration
+import asyncio
 import inspect
+
+
+class _CallbackDispatcher:
+    """Forwards callback invocations to the asyncio event loop.
+
+    When attached to an event loop, wraps callbacks so that:
+    - If the callback returns a coroutine object (async handler), it schedules
+      the coroutine on the event loop via asyncio.run_coroutine_threadsafe
+    - If the callback is synchronous, it calls it directly on the calling thread
+
+    If not attached to any event loop, acts as a pass-through (no overhead).
+
+    Optionally catches exceptions raised by user callbacks and forwards them
+    to a user-provided error handler.
+
+    Usage:
+        dispatcher = _CallbackDispatcher()
+        dispatcher.attach()  # attach to the current event loop
+        wrapped_fn = dispatcher.wrap(user_fn)
+    """
+
+    def __init__(self):
+        self._loop = None
+        self._error_handler = None
+
+    def set_error_handler(self, handler):
+        """Set a handler for callback exceptions.
+
+        Args:
+            handler: Callable[[Exception], None] or None to disable.
+                     Called when a user callback raises an exception.
+        """
+        self._error_handler = handler
+
+    def attach(self, loop=None):
+        """Attach to an event loop.
+
+        Args:
+            loop: Optional event loop. If None, uses the running loop
+                  or the default event loop.
+        """
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    return  # no loop available
+        self._loop = loop
+
+    def wrap(self, fn):
+        """Wrap a callback for safe invocation from C++ threads.
+
+        If an event loop is attached and the callback produces a coroutine,
+        the coroutine is scheduled on the event loop.
+        Catches exceptions and forwards them to the error handler.
+
+        Args:
+            fn: The callback function to wrap, or None.
+
+        Returns:
+            The wrapped function, or None if fn is None.
+            If no event loop is attached and no error handler is set,
+            returns fn unchanged (pass-through).
+        """
+        if fn is None:
+            return None
+        if self._loop is None:
+            return self._wrap_sync(fn)
+        return self._wrap_async_dispatch(fn)
+
+    def _wrap_sync(self, fn):
+        """Wrap for sync mode (no event loop) -- adds error catching only."""
+        error_handler = self._error_handler
+        if error_handler is None:
+            return fn  # no error handler and no loop -- pass through as before
+
+        def wrapped(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                error_handler(e)
+                return None
+
+        return wrapped
+
+    def _wrap_async_dispatch(self, fn):
+        """Wrap for async mode -- dispatches to event loop with error catching."""
+        assert self._loop is not None, "attach_event_loop() must be called before using async dispatch"
+        loop = self._loop
+        error_handler = self._error_handler
+
+        def dispatched(*args, **kwargs):
+            try:
+                result = fn(*args, **kwargs)
+                if inspect.iscoroutine(result):
+                    future = asyncio.run_coroutine_threadsafe(result, loop)
+                    try:
+                        return future.result()
+                    except Exception as e:
+                        if error_handler:
+                            error_handler(e)
+                        return None
+                return result
+            except Exception as e:
+                if error_handler:
+                    error_handler(e)
+                return None
+
+        return dispatched
+
 
 try:
     # This is the C++ extension module built by CMake.
-    from . import _obscuraproto as _bindings
+    from . import _obscuraproto as _bindings  # pyright: ignore[reportAttributeAccessIssue]
 except ImportError:
     # If the extension is not in the same directory, it might be in the build/lib directory.
     # This is a fallback for development environments. For a real installation,
@@ -101,6 +213,10 @@ class Stream:
     def __init__(self, cpp_stream):
         self._s = cpp_stream
 
+    def set_dispatcher(self, dispatcher):
+        """Internal: attach a callback dispatcher for thread-safe handler dispatch."""
+        self._dispatcher = dispatcher
+
     @property
     def stream_id(self) -> int:
         """Unique stream identifier."""
@@ -154,7 +270,8 @@ class Stream:
         def wrapper(data_list):
             handler(bytes(data_list))
 
-        self._s.set_data_handler(wrapper)
+        dispatcher = getattr(self, "_dispatcher", None)
+        self._s.set_data_handler(dispatcher.wrap(wrapper) if dispatcher else wrapper)
         return handler
 
     def on_end(self, handler):
@@ -166,7 +283,8 @@ class Stream:
             def on_end():
                 stream.end()  # echo the half-close
         """
-        self._s.set_end_handler(handler)
+        dispatcher = getattr(self, "_dispatcher", None)
+        self._s.set_end_handler(dispatcher.wrap(handler) if dispatcher else handler)
         return handler
 
     def on_cancel(self, handler):
@@ -178,7 +296,28 @@ class Stream:
             def on_cancel():
                 print("Stream was cancelled")
         """
-        self._s.set_cancel_handler(handler)
+        dispatcher = getattr(self, "_dispatcher", None)
+        self._s.set_cancel_handler(dispatcher.wrap(handler) if dispatcher else handler)
+        return handler
+
+    def on_error(self, handler):
+        """Register a handler for callback errors on this stream.
+
+        Catches exceptions from on_data, on_end, on_cancel handlers::
+
+            @stream.on_error
+            def handle_error(error: Exception):
+                print(f"Stream callback error: {error}")
+
+        Args:
+            handler: Callable[[Exception], None]
+
+        Returns:
+            The handler function (for use as a decorator).
+        """
+        dispatcher = getattr(self, "_dispatcher", None)
+        if dispatcher:
+            dispatcher.set_error_handler(handler)
         return handler
 
 
@@ -341,6 +480,13 @@ def _create_request_unpacking_handler(handler, receives_hdl_from_native=False):
 
         # Call the handler, expecting a Payload return
         response_payload = handler(**handler_kwargs)
+
+        # If handler is async (coroutine function), the result is a coroutine object.
+        # Skip the isinstance check — the _CallbackDispatcher will schedule it
+        # on the event loop and get the actual Payload result.
+        if inspect.iscoroutine(response_payload):
+            return response_payload
+
         if not isinstance(response_payload, _bindings.Payload):
             raise TypeError(
                 f"Request handler '{handler.__name__}' must return a "
@@ -371,6 +517,45 @@ class Server:
         self._long_term_key = _bindings.Crypto.generate_sign_keypair()
         cfg = config if config is not None else _bindings.Config.with_defaults()
         self._server = _bindings.WsServer(self._long_term_key, cfg)
+        self._dispatcher = _CallbackDispatcher()
+
+    def attach_event_loop(self, loop=None):
+        """Attach all callbacks to an asyncio event loop for thread-safe dispatch.
+
+        Call this if you use async handlers (coroutines) in your callbacks::
+
+            server = Server()
+            server.attach_event_loop()
+
+
+            @server.on_payload(0x1001)
+            async def handle(data: str):
+                result = await some_async_operation(data)
+                ...
+
+        Args:
+            loop: Optional event loop. If None, uses the running/default loop.
+        """
+        self._dispatcher.attach(loop)
+
+    def on_error(self, handler):
+        """Register a handler for callback errors.
+
+        Use this to catch exceptions that occur in your event handlers
+        (on_payload, on_request, on_stream, etc.)::
+
+            @server.on_error
+            def handle_error(error: Exception):
+                print(f"Callback error: {error}")
+
+        Args:
+            handler: Callable[[Exception], None]
+
+        Returns:
+            The handler function (for use as a decorator).
+        """
+        self._dispatcher.set_error_handler(handler)
+        return handler
 
     @property
     def public_key(self):
@@ -401,7 +586,7 @@ class Server:
             def on_connection_open(hdl):
                 print(f"New connection: {hdl}")
         """
-        self._server.set_on_open_callback(handler)
+        self._server.set_on_open_callback(self._dispatcher.wrap(handler))
         return handler
 
     def on_close(self, handler):
@@ -413,7 +598,7 @@ class Server:
             def on_connection_close(hdl):
                 print(f"Connection closed: {hdl}")
         """
-        self._server.set_on_close_callback(handler)
+        self._server.set_on_close_callback(self._dispatcher.wrap(handler))
         return handler
 
     def send(self, hdl, payload):
@@ -446,8 +631,11 @@ class Server:
             stream = server.start_stream(hdl, 0x3001)
         """
         if stream_op_code is not None:
-            return Stream(self._server.start_stream(hdl, stream_op_code))
-        return Stream(self._server.start_stream(hdl))
+            stream = Stream(self._server.start_stream(hdl, stream_op_code))
+        else:
+            stream = Stream(self._server.start_stream(hdl))
+        stream.set_dispatcher(self._dispatcher)
+        return stream
 
     async def async_start_stream(self, hdl, stream_op_code=None):
         """Async version of :meth:`start_stream` — does not block the event loop.
@@ -460,7 +648,9 @@ class Server:
             cpp_stream = await asyncio.to_thread(self._server.start_stream, hdl, stream_op_code)
         else:
             cpp_stream = await asyncio.to_thread(self._server.start_stream, hdl)
-        return Stream(cpp_stream)
+        stream = Stream(cpp_stream)
+        stream.set_dispatcher(self._dispatcher)
+        return stream
 
     def on_incoming_stream(self, handler):
         """Decorator to register a handler for incoming streams from clients.
@@ -475,9 +665,11 @@ class Server:
         """
 
         def wrapper(cpp_stream):
-            handler(Stream(cpp_stream))
+            stream = Stream(cpp_stream)
+            stream.set_dispatcher(self._dispatcher)
+            return handler(stream)
 
-        self._server.register_incoming_stream_handler(wrapper)
+        self._server.register_incoming_stream_handler(self._dispatcher.wrap(wrapper))
         return handler
 
     def on_stream(self, op_code):
@@ -498,9 +690,11 @@ class Server:
 
         def decorator(handler):
             def wrapper(cpp_stream):
-                handler(Stream(cpp_stream))
+                stream = Stream(cpp_stream)
+                stream.set_dispatcher(self._dispatcher)
+                return handler(stream)
 
-            self._server.register_stream_handler(op_code, wrapper)
+            self._server.register_stream_handler(op_code, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -523,9 +717,11 @@ class Server:
 
         def decorator(handler):
             def wrapper(cpp_stream):
-                handler(Stream(cpp_stream))
+                stream = Stream(cpp_stream)
+                stream.set_dispatcher(self._dispatcher)
+                return handler(stream)
 
-            self._server.register_anon_stream_handler(op_code, wrapper)
+            self._server.register_anon_stream_handler(op_code, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -546,7 +742,7 @@ class Server:
 
         def decorator(handler):
             wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
-            self._server.register_op_handler(opcode, wrapper)
+            self._server.register_op_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -556,7 +752,7 @@ class Server:
         Decorator for the default handler, with auto-unpacking based on type hints.
         """
         wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
-        self._server.set_default_payload_handler(wrapper)
+        self._server.set_default_payload_handler(self._dispatcher.wrap(wrapper))
         return handler
 
     def on_request(self, opcode):
@@ -576,7 +772,7 @@ class Server:
 
         def decorator(handler):
             wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=True)
-            self._server.register_request_handler(opcode, wrapper)
+            self._server.register_request_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -603,7 +799,7 @@ class Server:
 
         def decorator(handler):
             wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
-            self._server.register_anon_op_handler(opcode, wrapper)
+            self._server.register_anon_op_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -614,7 +810,7 @@ class Server:
         with auto-unpacking based on type hints.
         """
         wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=True)
-        self._server.set_anon_default_payload_handler(wrapper)
+        self._server.set_anon_default_payload_handler(self._dispatcher.wrap(wrapper))
         return handler
 
     def on_anon_request(self, opcode):
@@ -633,7 +829,7 @@ class Server:
 
         def decorator(handler):
             wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=True)
-            self._server.register_anon_request_handler(opcode, wrapper)
+            self._server.register_anon_request_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -702,6 +898,44 @@ class Client:
         key_view.public_key = server_public_key
         cfg = config if config is not None else _bindings.Config.with_defaults()
         self._client = _bindings.WsClient(key_view, cfg)
+        self._dispatcher = _CallbackDispatcher()
+
+    def attach_event_loop(self, loop=None):
+        """Attach all callbacks to an asyncio event loop for thread-safe dispatch.
+
+        Call this if you use async handlers (coroutines) in your callbacks::
+
+            client = Client(server_pk)
+            client.attach_event_loop()
+
+
+            @client.on_payload(0x2001)
+            async def handle(data: str):
+                result = await process_data(data)
+                ...
+
+        Args:
+            loop: Optional event loop. If None, uses the running/default loop.
+        """
+        self._dispatcher.attach(loop)
+
+    def on_error(self, handler):
+        """Register a handler for callback errors.
+
+        Use this to catch exceptions that occur in your event handlers::
+
+            @client.on_error
+            def handle_error(error: Exception):
+                print(f"Callback error: {error}")
+
+        Args:
+            handler: Callable[[Exception], None]
+
+        Returns:
+            The handler function (for use as a decorator).
+        """
+        self._dispatcher.set_error_handler(handler)
+        return handler
 
     def set_client_identity(self, keypair):
         """Sets the client's Ed25519 identity keypair for authentication.
@@ -713,15 +947,6 @@ class Client:
             keypair: A KeyPair containing the client's Ed25519 keys.
         """
         self._client.set_client_identity(keypair)
-
-    def send_response(self, request_id, payload):
-        """Sends a response to a specific server-initiated request.
-
-        Args:
-            request_id: The ID of the request being responded to.
-            payload: The response payload.
-        """
-        self._client.send_response(request_id, payload)
 
     def connect(self, uri):
         """Connects to the server at the given WebSocket URI (e.g., "ws://localhost:9002")."""
@@ -761,8 +986,11 @@ class Client:
             stream = client.start_stream(0x3001)
         """
         if stream_op_code is not None:
-            return Stream(self._client.start_stream(stream_op_code))
-        return Stream(self._client.start_stream())
+            stream = Stream(self._client.start_stream(stream_op_code))
+        else:
+            stream = Stream(self._client.start_stream())
+        stream.set_dispatcher(self._dispatcher)
+        return stream
 
     async def async_start_stream(self, stream_op_code=None):
         """Async version of :meth:`start_stream` — does not block the event loop.
@@ -774,7 +1002,9 @@ class Client:
             cpp_stream = await asyncio.to_thread(self._client.start_stream, stream_op_code)
         else:
             cpp_stream = await asyncio.to_thread(self._client.start_stream)
-        return Stream(cpp_stream)
+        stream = Stream(cpp_stream)
+        stream.set_dispatcher(self._dispatcher)
+        return stream
 
     def on_incoming_stream(self, handler):
         """Decorator to register a handler for incoming streams from the server.
@@ -789,9 +1019,11 @@ class Client:
         """
 
         def wrapper(cpp_stream):
-            handler(Stream(cpp_stream))
+            stream = Stream(cpp_stream)
+            stream.set_dispatcher(self._dispatcher)
+            return handler(stream)
 
-        self._client.register_incoming_stream_handler(wrapper)
+        self._client.register_incoming_stream_handler(self._dispatcher.wrap(wrapper))
         return handler
 
     def on_stream(self, op_code):
@@ -812,21 +1044,23 @@ class Client:
 
         def decorator(handler):
             def wrapper(cpp_stream):
-                handler(Stream(cpp_stream))
+                stream = Stream(cpp_stream)
+                stream.set_dispatcher(self._dispatcher)
+                return handler(stream)
 
-            self._client.register_stream_handler(op_code, wrapper)
+            self._client.register_stream_handler(op_code, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
 
     def on_ready(self, handler):
         """Decorator to register a callback for when the client is connected and ready."""
-        self._client.set_on_ready_callback(handler)
+        self._client.set_on_ready_callback(self._dispatcher.wrap(handler))
         return handler
 
     def on_disconnect(self, handler):
         """Decorator to register a callback for when the client disconnects."""
-        self._client.set_on_disconnect_callback(handler)
+        self._client.set_on_disconnect_callback(self._dispatcher.wrap(handler))
         return handler
 
     def on_payload(self, opcode):
@@ -845,7 +1079,7 @@ class Client:
 
         def decorator(handler):
             wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=False)
-            self._client.register_op_handler(opcode, wrapper)
+            self._client.register_op_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator
@@ -855,7 +1089,7 @@ class Client:
         Decorator for the default handler, with auto-unpacking based on type hints.
         """
         wrapper = _create_unpacking_handler(handler, receives_hdl_from_native=False)
-        self._client.set_default_payload_handler(wrapper)
+        self._client.set_default_payload_handler(self._dispatcher.wrap(wrapper))
         return handler
 
     def on_request(self, opcode):
@@ -875,7 +1109,7 @@ class Client:
 
         def decorator(handler):
             wrapper = _create_request_unpacking_handler(handler, receives_hdl_from_native=False)
-            self._client.register_request_handler(opcode, wrapper)
+            self._client.register_request_handler(opcode, self._dispatcher.wrap(wrapper))
             return handler
 
         return decorator

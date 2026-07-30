@@ -377,10 +377,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
             self.set_on_close_callback([callback](WsConnectionHdl hdl) {
                 callback(WsConnectionHdlWrapper{hdl});
             });
-        }, "Registers a callback called when a WebSocket connection is closed.")
-        .def("send_response", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, uint32_t request_id, const Payload &payload) {
-            self.send_response(hdl.hdl, request_id, payload);
-        }, "Sends a response to a specific request.");
+        }, "Registers a callback called when a WebSocket connection is closed.");
 
     // WS Client
     py::class_<WsClientWrapper>(m, "WsClient")
@@ -401,8 +398,6 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("register_op_handler", &WsClientWrapper::register_op_handler)
         .def("register_request_handler", &WsClientWrapper::register_request_handler, "Register a request handler for a specific opcode, expecting a Payload response.")
         .def("set_default_payload_handler", &WsClientWrapper::set_default_payload_handler)
-        .def("send_response", &WsClientWrapper::send_response,
-             "Sends a response to a specific server-initiated request.")
         .def("start_stream", py::overload_cast<>(&WsClientWrapper::start_stream),
              py::call_guard<py::gil_scoped_release>(),
              "Start a new outgoing stream to the server.")
