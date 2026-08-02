@@ -10,6 +10,8 @@
 #include <obscuraproto/handshake_messages.hpp>
 #include <obscuraproto/keys.hpp>
 #include <obscuraproto/packet.hpp>
+#include <obscuraproto/rate_limiter.hpp>
+#include <obscuraproto/secure_buffer.hpp>
 #include <obscuraproto/stream.hpp>
 #include <obscuraproto/session.hpp>
 #include <obscuraproto/version.hpp>
@@ -30,9 +32,51 @@ struct WsConnectionHdlWrapper {
     WsConnectionHdl hdl;
 };
 
+// Wrapper around std::future<Payload> for non-blocking async requests.
+// The C++ async_request() methods return immediately (they set up a promise
+// that is fulfilled from the websocket I/O thread when the RESPONSE arrives).
+// Python code polls ready() on the event loop and only calls get() when ready,
+// so no thread-pool thread is blocked for the request duration.
+//
+// NOTE: CppPayloadFuture is SINGLE-USE. Once get() has been called (after
+// ready() returned true), the underlying std::future is consumed and the
+// object must not be polled or re-used. Call ready()/get() exactly once.
+class CppPayloadFuture {
+public:
+    explicit CppPayloadFuture(std::future<Payload> future) : future_(std::move(future)) {}
+
+    // Poll without blocking.
+    bool ready() const {
+        return future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
+
+    // Blocking get. Releases the GIL; returns immediately when called after ready().
+    Payload get() {
+        return future_.get();
+    }
+
+private:
+    std::future<Payload> future_;
+};
+
 
 PYBIND11_MODULE(_obscuraproto, m) {
     m.doc() = "Python bindings for the ObscuraProto C++ library";
+
+    // Exceptions — map ObscuraProto C++ exceptions to Python types.
+    // Hierarchy in errors.hpp:
+    //   Exception <- RuntimeError <- TimeoutError
+    //   Exception <- LogicError <- InvalidArgument
+    // pybind11's registered translators are tried in reverse registration
+    // order and match by C++ catch-clause type, so InvalidArgument (a C++
+    // subclass of LogicError) must be registered LAST: its own translator is
+    // then tried before the LogicError translator and wins the typeid dispatch.
+    // The registered Python types subclass the Python builtins, so base-class
+    // catches (except ValueError, except RuntimeError, except TimeoutError)
+    // also work on the Python side.
+    py::register_exception<TimeoutError>(m, "TimeoutError", PyExc_TimeoutError);
+    py::register_exception<LogicError>(m, "LogicError", PyExc_RuntimeError);
+    py::register_exception<InvalidArgument>(m, "InvalidArgument", PyExc_ValueError);
 
     // Version
     m.attr("V1_0") = py::int_(Versions::V1_0);
@@ -72,6 +116,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def_readwrite("handshake_ms", &TimeoutConfig::handshake_ms)
         .def_readwrite("idle_ms", &TimeoutConfig::idle_ms)
         .def_readwrite("check_interval_ms", &TimeoutConfig::check_interval_ms)
+        .def_readwrite("request_ms", &TimeoutConfig::request_ms)
         .def_static("defaults", &TimeoutConfig::defaults);
 
     py::class_<ReservedOpcodes>(m, "ReservedOpcodes")
@@ -93,6 +138,68 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def_readwrite("supported_versions", &Config::supported_versions)
         .def_static("from_yaml", &Config::from_yaml)
         .def_static("with_defaults", &Config::with_defaults);
+
+    // RateLimiter — sliding-window/token-bucket rate enforcement. All methods
+    // are synchronous and mutex-guarded (no I/O), so the GIL stays held.
+    py::class_<RateLimiter>(m, "RateLimiter")
+        .def(py::init<const RateLimitConfig&>(), py::arg("config"),
+             "Construct a rate limiter from a RateLimitConfig.")
+        .def("check_connection_rate", &RateLimiter::check_connection_rate, py::arg("ip"),
+             "Returns True if the connection rate for this IP is within limits.")
+        .def("record_connection", &RateLimiter::record_connection, py::arg("ip"),
+             "Record a connection attempt for this IP.")
+        .def("check_handshake_rate", &RateLimiter::check_handshake_rate, py::arg("ip"),
+             "Returns True if the handshake rate for this IP is within limits.")
+        .def("record_handshake", &RateLimiter::record_handshake, py::arg("ip"),
+             "Record a handshake attempt for this IP.")
+        .def("check_message_rate", &RateLimiter::check_message_rate, py::arg("conn_id"),
+             "Returns True if the message rate for this connection is within limits.")
+        .def("record_message", &RateLimiter::record_message, py::arg("conn_id"),
+             "Record a message for this connection (consumes a token).")
+        .def("check_active_connections", &RateLimiter::check_active_connections, py::arg("ip"),
+             "Returns True if the active connection limit for this IP is not exceeded.")
+        .def("register_connection", &RateLimiter::register_connection, py::arg("ip"),
+             "Register a new connection for this IP and return its connection ID.")
+        .def("unregister_connection", &RateLimiter::unregister_connection,
+             py::arg("conn_id"), py::arg("ip"),
+             "Unregister a connection, releasing its tokens and active slot.")
+        .def("active_total", &RateLimiter::active_total,
+             "Returns the total number of active connections.")
+        .def("cleanup", &RateLimiter::cleanup,
+             "Expire stale sliding-window timestamps and drop idle per-IP state.");
+
+    // SecureBuffer — heap memory allocated via sodium_malloc, zeroed on clear()
+    // (sodium_memzero) and on destruction. Data is exchanged with Python as
+    // byte copies only; Python never receives a reference to the live buffer,
+    // so the contents cannot be corrupted from the Python side.
+    py::class_<SecureBuffer>(m, "SecureBuffer")
+        .def(py::init<>(), "Construct an empty secure buffer.")
+        .def(py::init<size_t>(), py::arg("size"),
+             "Construct a secure buffer of the given size (zero-initialized).")
+        .def("resize", &SecureBuffer::resize, py::arg("new_size"),
+             "Resize the buffer, preserving as much data as fits.")
+        .def("size", &SecureBuffer::size, "Returns the buffer size in bytes.")
+        .def("empty", &SecureBuffer::empty, "Returns True if the buffer is empty.")
+        .def("clear", &SecureBuffer::clear,
+             "Securely zero (sodium_memzero) and free the buffer memory.")
+        .def("to_bytes", [](const SecureBuffer &self) -> py::bytes {
+            if (self.empty()) {
+                return py::bytes("");
+            }
+            return py::bytes(reinterpret_cast<const char*>(self.data()), self.size());
+        }, "Returns a copy of the buffer contents as bytes. Safe: Python never "
+           "gets a reference to the internal memory.")
+        .def("from_bytes", [](SecureBuffer &self, const std::string &data) {
+            self.assign(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+        }, py::arg("data"),
+           "Replace the buffer contents with a copy of the given bytes.")
+        .def("__bytes__", [](const SecureBuffer &self) -> py::bytes {
+            if (self.empty()) {
+                return py::bytes("");
+            }
+            return py::bytes(reinterpret_cast<const char*>(self.data()), self.size());
+        }, "Returns the buffer contents as bytes (copy).")
+        .def("__len__", &SecureBuffer::size, "Returns the buffer size in bytes.");
 
     // Keys
     py::class_<PublicKey>(m, "PublicKey")
@@ -150,6 +257,32 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def_static("verify", &Crypto::verify)
         .def_static("client_compute_session_keys", &Crypto::client_compute_session_keys)
         .def_static("server_compute_session_keys", &Crypto::server_compute_session_keys)
+        .def_static("keypair_from_seed", [](const py::bytes &seed) -> KeyPair {
+            // The seed bytes pointer is only valid for the duration of this call,
+            // so it is consumed immediately inside the lambda body (never stored).
+            char *ptr = nullptr;
+            Py_ssize_t len = 0;
+            if (PyBytes_AsStringAndSize(seed.ptr(), &ptr, &len) != 0) {
+                throw py::error_already_set();
+            }
+            return Crypto::keypair_from_seed(
+                reinterpret_cast<const uint8_t*>(ptr), static_cast<size_t>(len));
+        }, py::arg("seed"),
+           "Deterministically derives an Ed25519 key pair from a 32-byte seed "
+           "(RFC 8032). Raises InvalidArgument (a ValueError) if the seed length "
+           "is not exactly 32 bytes.")
+        .def_static("derive_public_key", [](const py::bytes &private_key) -> PublicKey {
+            char *ptr = nullptr;
+            Py_ssize_t len = 0;
+            if (PyBytes_AsStringAndSize(private_key.ptr(), &ptr, &len) != 0) {
+                throw py::error_already_set();
+            }
+            return Crypto::derive_public_key(
+                reinterpret_cast<const uint8_t*>(ptr), static_cast<size_t>(len));
+        }, py::arg("private_key"),
+           "Derives the Ed25519 public key from a 64-byte private key (seed || public). "
+           "Raises InvalidArgument (a ValueError) if the private key length is not "
+           "exactly 64 bytes.")
         .def_static("encrypt", &Crypto::encrypt)
         .def_static("decrypt", &Crypto::decrypt);
     
@@ -157,6 +290,13 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def(py::init<>())
         .def_readwrite("rx", &Crypto::SessionKeys::rx)
         .def_readwrite("tx", &Crypto::SessionKeys::tx);
+
+    // Result struct returned by Crypto.decrypt. Registered so the existing
+    // Crypto.decrypt binding is usable from Python.
+    py::class_<Crypto::DecryptedResult>(m, "DecryptedResult")
+        .def(py::init<>())
+        .def_readwrite("payload", &Crypto::DecryptedResult::payload)
+        .def_readwrite("counter", &Crypto::DecryptedResult::counter);
 
     // Packet
     py::class_<Payload>(m, "Payload")
@@ -269,11 +409,22 @@ PYBIND11_MODULE(_obscuraproto, m) {
     py::class_<WsConnectionHdlWrapper>(m, "ConnectionHdl")
         .def(py::init<>())
         .def("__repr__", [](const WsConnectionHdlWrapper &self) {
-            return "<obscuraproto.ConnectionHdl>";
+            return "<obscuraproto.ConnectionHdl at " + std::to_string(reinterpret_cast<uintptr_t>(&self)) + ">";
+        });
+
+    // CppPayloadFuture — pollable wrapper around std::future<Payload>
+    py::class_<CppPayloadFuture>(m, "CppPayloadFuture")
+        .def("ready", &CppPayloadFuture::ready,
+             "Returns True if the response is available (non-blocking).")
+        .def("get", &CppPayloadFuture::get, py::call_guard<py::gil_scoped_release>(),
+             "Blocks until the response is available and returns the response Payload.")
+        .def("__repr__", [](const CppPayloadFuture &self) {
+            return std::string("<obscuraproto.CppPayloadFuture ready=") +
+                   (self.ready() ? "True" : "False") + ">";
         });
 
     // WS Server
-    py::class_<WsServerWrapper>(m, "WsServer")
+    py::class_<WsServerWrapper, std::shared_ptr<WsServerWrapper>>(m, "WsServer")
         .def(py::init<KeyPair, Config>(), py::arg("keypair"), py::arg("config") = Config::with_defaults())
         .def("run", &WsServerWrapper::run, py::call_guard<py::gil_scoped_release>(),
              "Runs the server in a background thread.")
@@ -285,8 +436,17 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("sync_request", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload) {
             return self.sync_request(hdl.hdl, payload);
         }, py::call_guard<py::gil_scoped_release>(), "Sends a request to a client and returns a response.")
+        .def("async_request", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload) {
+            return CppPayloadFuture(self.async_request(hdl.hdl, payload));
+        }, py::call_guard<py::gil_scoped_release>(),
+             "Sends a request to a client and returns a pollable CppPayloadFuture that completes when the response arrives.")
+        .def("async_request", [](WsServerWrapper &self, WsConnectionHdlWrapper hdl, const Payload &payload, uint32_t timeout_ms) {
+            return CppPayloadFuture(self.async_request(hdl.hdl, payload, timeout_ms));
+        }, py::call_guard<py::gil_scoped_release>(), py::arg("hdl"), py::arg("payload"), py::arg("timeout_ms"),
+             "Sends a request to a client and returns a pollable CppPayloadFuture, bounded by a timeout in milliseconds (0 = unlimited).")
+        // Internal bridge to C++ — called from Python decorators only
         .def("register_op_handler", [](WsServerWrapper &self, Payload::OpCode op_code, 
-                                       std::function<void(WsConnectionHdlWrapper, Payload)> callback) {
+                                        std::function<void(WsConnectionHdlWrapper, Payload)> callback) {
             self.register_op_handler(op_code, [callback](WsConnectionHdl hdl, Payload payload) {
                 callback(WsConnectionHdlWrapper{hdl}, payload);
             });
@@ -297,6 +457,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
                 return callback(WsConnectionHdlWrapper{hdl}, reader);
             });
         }, "Register a request handler for a specific opcode, expecting a Payload response.")
+        // Intentionally NOT bound — response is returned from request handlers via return value
         .def("set_default_payload_handler", [](WsServerWrapper &self,
                                                 std::function<void(WsConnectionHdlWrapper, Payload)> callback) {
             self.set_default_payload_handler([callback](WsConnectionHdl hdl, Payload payload) {
@@ -366,6 +527,10 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("sync_request_to_identity", &WsServerWrapper::sync_request_to_identity,
              py::call_guard<py::gil_scoped_release>(),
              "Sends a synchronous request to a specific client identified by their public key.")
+        .def("async_request_to_identity", [](WsServerWrapper &self, const PublicKey &identity_pk, const Payload &payload) {
+            return CppPayloadFuture(self.async_request_to_identity(identity_pk, payload));
+        }, py::call_guard<py::gil_scoped_release>(),
+             "Sends a request to a specific client identified by their public key and returns a pollable CppPayloadFuture.")
         .def("set_on_open_callback", [](WsServerWrapper &self,
                                         std::function<void(WsConnectionHdlWrapper)> callback) {
             self.set_on_open_callback([callback](WsConnectionHdl hdl) {
@@ -380,7 +545,7 @@ PYBIND11_MODULE(_obscuraproto, m) {
         }, "Registers a callback called when a WebSocket connection is closed.");
 
     // WS Client
-    py::class_<WsClientWrapper>(m, "WsClient")
+    py::class_<WsClientWrapper, std::shared_ptr<WsClientWrapper>>(m, "WsClient")
         .def(py::init<KeyPair, Config>(), py::arg("keypair"), py::arg("config") = Config::with_defaults())
         .def("connect", &WsClientWrapper::connect, py::call_guard<py::gil_scoped_release>(),
              "Connects to the server and performs handshake.")
@@ -391,12 +556,26 @@ PYBIND11_MODULE(_obscuraproto, m) {
         .def("sync_request", [](WsClientWrapper &self, const Payload &payload) {
             return self.sync_request(payload);
         }, py::call_guard<py::gil_scoped_release>(), "Sends a request to the server and returns a response.")
+        .def("sync_request", [](WsClientWrapper &self, const Payload &payload, uint32_t timeout_ms) {
+            return self.sync_request(payload, timeout_ms);
+        }, py::call_guard<py::gil_scoped_release>(), py::arg("payload"), py::arg("timeout_ms"),
+             "Sends a request to the server and returns a response, bounded by a timeout in milliseconds (0 = unlimited).")
+        .def("async_request", [](WsClientWrapper &self, const Payload &payload) {
+            return CppPayloadFuture(self.async_request(payload));
+        }, py::call_guard<py::gil_scoped_release>(),
+             "Sends a request to the server and returns a pollable CppPayloadFuture that completes when the response arrives.")
+        .def("async_request", [](WsClientWrapper &self, const Payload &payload, uint32_t timeout_ms) {
+            return CppPayloadFuture(self.async_request(payload, timeout_ms));
+        }, py::call_guard<py::gil_scoped_release>(), py::arg("payload"), py::arg("timeout_ms"),
+             "Sends a request to the server and returns a pollable CppPayloadFuture, bounded by a timeout in milliseconds (0 = unlimited).")
         .def("set_client_identity", &WsClientWrapper::set_client_identity,
              "Sets the client's Ed25519 identity keypair for authentication.")
         .def("set_on_ready_callback", &WsClientWrapper::set_on_ready_callback)
         .def("set_on_disconnect_callback", &WsClientWrapper::set_on_disconnect_callback)
+        // Internal bridge to C++ — called from Python decorators only
         .def("register_op_handler", &WsClientWrapper::register_op_handler)
         .def("register_request_handler", &WsClientWrapper::register_request_handler, "Register a request handler for a specific opcode, expecting a Payload response.")
+        // Intentionally NOT bound — response is returned from request handlers via return value
         .def("set_default_payload_handler", &WsClientWrapper::set_default_payload_handler)
         .def("start_stream", py::overload_cast<>(&WsClientWrapper::start_stream),
              py::call_guard<py::gil_scoped_release>(),

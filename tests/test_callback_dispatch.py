@@ -77,12 +77,13 @@ class TestCallbackDispatcherUnit:
     # -- attach_event_loop -------------------------------------------------
 
     def test_no_loop_pass_through(self):
-        """Without attach(), wrap returns the original fn when no error handler."""
+        """Without attach(), wrap still wraps fn and calls it correctly."""
         d = _CallbackDispatcher()
         sentinel = lambda: 42  # noqa: E731
 
         wrapped = d.wrap(sentinel)
-        assert wrapped is sentinel, "Should be pass-through when no loop and no error handler"
+        assert wrapped is not sentinel, "Should always wrap (no pass-through)"
+        assert wrapped() == 42
 
     def test_no_loop_with_error_handler_wraps(self):
         """Without attach() but with error handler, wrap wraps the fn."""
@@ -184,10 +185,15 @@ class TestCallbackDispatcherUnit:
     # -- no error handler --------------------------------------------------
 
     def test_no_error_handler_sync_pass_through(self):
-        """Without error handler, wrap returns fn unchanged (pass-through)."""
+        """Without error handler, wrap returns a working wrapper that re-raises."""
         d = _CallbackDispatcher()
         fn = lambda: 99  # noqa: E731
-        assert d.wrap(fn) is fn
+        wrapped = d.wrap(fn)
+        assert wrapped is not fn
+        assert wrapped() == 99
+
+        with pytest.raises(ZeroDivisionError):
+            d.wrap(lambda: 1 / 0)()
 
     # -- set_error_handler idempotent / replaceable -------------------------
 
@@ -212,7 +218,7 @@ class TestCallbackDispatcherUnit:
         assert len(second) == 1  # new handler got it
 
     def test_set_error_handler_to_none_disables(self):
-        """Setting error handler to None disables error catching -> pass-through."""
+        """Setting error handler to None disables error catching -> exceptions re-raise."""
         d = _CallbackDispatcher()
         d.set_error_handler(lambda e: None)  # active
 
@@ -223,7 +229,97 @@ class TestCallbackDispatcherUnit:
         # Re-wrap to pick up the new config
         fn = lambda: 42  # noqa: E731
         re_wrapped = d.wrap(fn)
-        assert re_wrapped is fn  # back to pass-through
+        assert re_wrapped is not fn  # still wrapped (not pass-through)
+        assert re_wrapped() == 42
+        with pytest.raises(ZeroDivisionError):
+            d.wrap(lambda: 1 / 0)()
+
+    def test_error_handler_registered_after_wrap_takes_effect(self):
+        """P1-2: an error handler set AFTER wrapping still catches errors.
+
+        The error handler is read at invocation time, so wrapping a callback
+        before registering @on_error must still forward errors.
+        """
+        errors = []
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+
+        d = _CallbackDispatcher()
+        d.attach(loop)
+
+        # Wrap a failing callback BEFORE any error handler is registered.
+        wrapped = d.wrap_fire_and_forget(lambda: 1 / 0)
+        assert wrapped is not None
+
+        # Register the error handler AFTER wrapping (the bug scenario).
+        d.set_error_handler(lambda e: errors.append(e))
+
+        try:
+            result = wrapped()
+            assert result is None
+            assert len(errors) == 1
+            assert isinstance(errors[0], ZeroDivisionError)
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=2)
+            loop.close()
+
+    def test_error_handler_replaced_after_wrap_takes_effect_sync(self):
+        """P1-2: replacing the error handler after wrapping is picked up at invocation."""
+        d = _CallbackDispatcher()
+        first = []
+        second = []
+        d.set_error_handler(lambda e: first.append(e))
+
+        wrapped = d.wrap(lambda: 1 / 0)  # sync path (_wrap_sync)
+        assert wrapped is not None
+
+        # Replace the handler AFTER wrapping -- no re-wrap needed.
+        d.set_error_handler(lambda e: second.append(e))
+
+        wrapped()
+        assert len(first) == 0, "Old captured handler should not be used"
+        assert len(second) == 1, "Handler read at invocation time should be used"
+
+    def test_error_handler_after_wrap_sync_mode(self):
+        """P1-2 sync gap: error handler registered AFTER wrap takes effect in sync mode.
+
+        Regression test for the wrap-time pass-through gating: a fire-and-forget
+        callback wrapped with no loop and no error handler must still forward
+        exceptions to an error handler registered later.
+        """
+        d = _CallbackDispatcher()
+        errors = []
+        wrapped = d.wrap_fire_and_forget(lambda: 1 / 0)
+        d.set_error_handler(lambda e: errors.append(e))
+        wrapped()  # should NOT raise, error handler should be called
+        assert len(errors) == 1
+        assert isinstance(errors[0], ZeroDivisionError)
+
+    def test_no_error_handler_raises(self):
+        """With no error handler at all, wrapped callbacks still raise."""
+        d = _CallbackDispatcher()
+        wrapped = d.wrap_fire_and_forget(lambda: 1 / 0)
+        with pytest.raises(ZeroDivisionError):
+            wrapped()
+
+    def test_wrap_sync_error_handler_after_wrap(self):
+        """wrap() in sync mode also picks up an error handler registered after wrapping."""
+        d = _CallbackDispatcher()
+        errors = []
+        wrapped = d.wrap(lambda: 1 / 0)
+        d.set_error_handler(lambda e: errors.append(e))
+        wrapped()  # should NOT raise
+        assert len(errors) == 1
+        assert isinstance(errors[0], ZeroDivisionError)
+
+    def test_wrap_sync_no_error_handler_raises(self):
+        """wrap() with no error handler re-raises the exception."""
+        d = _CallbackDispatcher()
+        wrapped = d.wrap(lambda: 1 / 0)
+        with pytest.raises(ZeroDivisionError):
+            wrapped()
 
     # -- attach_event_loop with async handler dispatch ----------------------
 
@@ -1020,3 +1116,90 @@ class TestAsyncHandlers:
             server.stop()
             time.sleep(0.1)
             capsys.readouterr()
+
+
+# ===================================================================
+# P1-1: async_request timeout enforcement
+# ===================================================================
+
+
+class _NeverReadyFuture:
+    """Stand-in for CppPayloadFuture that never becomes ready."""
+
+    def ready(self):
+        return False
+
+    def get(self):
+        raise AssertionError("get() must not be called after a timeout")
+
+
+class _QuickFuture:
+    """Stand-in for CppPayloadFuture that becomes ready after ~20ms."""
+
+    def __init__(self, result="response"):
+        self._ready_at = time.monotonic() + 0.02
+        self._result = result
+
+    def ready(self):
+        return time.monotonic() >= self._ready_at
+
+    def get(self):
+        return self._result
+
+
+class _FakeServerBackend:
+    def async_request(self, hdl, payload, timeout_ms=None):
+        return _QuickFuture()
+
+    def async_request_to_identity(self, identity_pk, payload):
+        return _QuickFuture()
+
+
+class _FakeClientBackend:
+    def async_request(self, payload, timeout_ms=None):
+        return _QuickFuture()
+
+
+class _FakeServerBackendNeverReady:
+    def async_request(self, hdl, payload, timeout_ms=None):
+        return _NeverReadyFuture()
+
+    def async_request_to_identity(self, identity_pk, payload):
+        return _NeverReadyFuture()
+
+
+class _FakeClientBackendNeverReady:
+    def async_request(self, payload, timeout_ms=None):
+        return _NeverReadyFuture()
+
+
+class TestAsyncRequestTimeout:
+    """async_request raises TimeoutError when the remote never responds (P1-1)."""
+
+    def test_client_async_request_success(self):
+        backend = _FakeClientBackend()
+        client = op.Client.__new__(op.Client)
+        client._client = backend
+        result = asyncio.run(client.async_request(None, timeout=5.0))
+        assert result == "response"
+
+    def test_client_async_request_times_out(self):
+        backend = _FakeClientBackendNeverReady()
+        client = op.Client.__new__(op.Client)
+        client._client = backend
+        with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+            asyncio.run(client.async_request(None, timeout=0.1))
+
+    def test_server_async_request_times_out(self):
+        backend = _FakeServerBackendNeverReady()
+        server = op.Server.__new__(op.Server)
+        server._server = backend
+        with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+            asyncio.run(server.async_request(None, None, timeout=0.1))
+
+    def test_server_async_request_to_identity_times_out(self):
+        backend = _FakeServerBackendNeverReady()
+        server = op.Server.__new__(op.Server)
+        server._server = backend
+        with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+            asyncio.run(server.async_request_to_identity(None, None, timeout=0.1))

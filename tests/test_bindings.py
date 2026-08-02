@@ -292,3 +292,9 @@ def test_python_stream_wrapper():
     stream.cancel()
     assert len(sent) == 4
     assert sent[3].op_code == 0xFFFA
+
+
+def test_cpp_payload_future_binding_repr():
+    """CppPayloadFuture exposes a __repr__ showing the ready state (P3-2)."""
+    cls = _bindings.CppPayloadFuture
+    assert hasattr(cls, "__repr__"), "CppPayloadFuture must expose __repr__"

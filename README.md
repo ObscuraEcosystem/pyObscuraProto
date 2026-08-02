@@ -22,6 +22,9 @@ Python wrapper for the [ObscuraProto](https://github.com/anomalyco/ObscuraProto)
 - **Configuration system** — rate limits, connection limits, message size limits, timeouts; load from YAML or set from Python
 - **Fully typed** — complete Python type annotations; checked with pyright
 - **High performance** — C++ core via pybind11, GIL released during I/O
+- **Typed exceptions** — C++ errors mapped to Python types: `TimeoutError` (builtin), `LogicError` (`RuntimeError`), `InvalidArgument` (`ValueError`)
+- **Request timeouts** — per-request timeout on all async request APIs; responses awaited without blocking the event loop
+- **Deadlock-safe callbacks** — blocking calls (`sync_request`, `stop`, `disconnect`) from callback/IO threads raise `LogicError` instead of deadlocking
 
 ## Installation
 
@@ -44,20 +47,22 @@ Requires CMake 3.14+ and a C++17 compiler.
 ## Quick Start
 
 ```python
-import ObscuraProto as op
+import asyncio
+from ObscuraProto import Server, Client, PayloadBuilder
 
-op.Crypto.init()
+# Server
+async with Server(port=9001) as server:
+    @server.on_payload(0x1001)
+    def handle(hdl, data: str):
+        print(f"Got payload: {data}")
+    await asyncio.Future()  # run forever
 
-server = op.Server()
-server.start(9001)
-
-client = op.Client(server.public_key)
-client.connect("ws://localhost:9001")
-
-@client.on_ready
-def on_ready():
-    payload = op.PayloadBuilder(0x1001).add_param("hello").build()
-    client.send(payload)
+# Client  
+async with Client(server.public_key, uri="ws://localhost:9001") as client:
+    @client.on_ready
+    def ready():
+        client.send(PayloadBuilder(0x1001).add_param("Hello").build())
+    await asyncio.Future()
 ```
 
 See [examples/](examples/) for more.
@@ -67,40 +72,37 @@ See [examples/](examples/) for more.
 Bidirectional multiplexed streams over a single encrypted connection.
 
 ```python
-import ObscuraProto as op
-
-op.Crypto.init()
+import asyncio
+from ObscuraProto import Server, Client
 
 # --- Server ---
-server = op.Server()
+async with Server(port=9006) as server:
+    @server.on_incoming_stream
+    def handle_stream(stream):
+        @stream.on_data
+        def on_data(data: bytes):
+            stream.write(b"echo: " + data)
 
-@server.on_incoming_stream
-def handle_stream(stream: op.Stream):
-    @stream.on_data
-    def on_data(data: bytes):
-        stream.write(b"echo: " + data)
+        @stream.on_end
+        def on_end():
+            stream.end()
 
-    @stream.on_end
-    def on_end():
-        stream.end()
-
-server.start(9006)
+    await asyncio.Future()  # run forever
 
 # --- Client ---
-client = op.Client(server.public_key)
+async with Client(server.public_key, uri="ws://localhost:9006") as client:
+    @client.on_ready
+    def on_ready():
+        stream = client.start_stream()
 
-@client.on_ready
-def on_ready():
-    stream = client.start_stream()
+        @stream.on_data
+        def on_data(data: bytes):
+            print(f"Echo: {data}")
 
-    @stream.on_data
-    def on_data(data: bytes):
-        print(f"Echo: {data}")
+        stream.write(b"hello")
+        stream.end()
 
-    stream.write(b"hello")
-    stream.end()
-
-client.connect("ws://localhost:9006")
+    await asyncio.Future()  # run forever
 ```
 
 Full example: [examples/streaming_example.py](examples/streaming_example.py)
@@ -133,24 +135,146 @@ Use decorators to handle streams with specific op codes:
 ```python
 # Server handles authenticated streams with specific op codes
 @server.on_stream(0x3001)
-def handle_stream_3001(stream: op.Stream):
+def handle_stream_3001(stream):
     @stream.on_data
     def on_data(data: bytes):
         print(f"Received on stream 0x3001: {data}")
 
 # Server handles anonymous streams with specific op codes
 @server.on_anon_stream(0x4001)
-def handle_anon_stream_4001(stream: op.Stream):
+def handle_anon_stream_4001(stream):
     @stream.on_data
     def on_data(data: bytes):
         print(f"Received anonymous on stream 0x4001: {data}")
 
 # Client handles incoming streams from server with specific op codes
 @client.on_stream(0x3001)
-def handle_incoming_stream_3001(stream: op.Stream):
+def handle_incoming_stream_3001(stream):
     @stream.on_data
     def on_data(data: bytes):
         print(f"Received from server on stream 0x3001: {data}")
+```
+
+## Async Support
+
+The library provides full async support for modern Python applications:
+
+- **attach_event_loop()** — Attach callbacks to an asyncio event loop for thread-safe dispatch
+- **async_request()** — Send requests and get futures for responses. The C++ side returns a `CppPayloadFuture` immediately; the response is awaited through an `asyncio.Future` fulfilled with `loop.call_soon_threadsafe` — the event loop never busy-polls and **no thread-pool thread is blocked** waiting. Accepts a `timeout` parameter (seconds, default 30 s) and raises `ObscuraProto.TimeoutError` if the remote side never responds.
+- **async_write()**, **async_end()**, **async_cancel()** — Async versions of stream I/O operations
+- **async_start_stream()** — Async version of start_stream() that doesn't block the event loop
+- **async_request_to_identity()** — Send requests to a client identified by their public key (async; uses the same awaitable bridge and `timeout` parameter as `async_request()`)
+- **Context managers** — Use `async with Server(port=...)` and `async with Client(pk, uri=...)` for automatic resource management
+
+Example async server setup:
+
+```python
+import asyncio
+from ObscuraProto import Server, Client, PayloadBuilder
+
+# Server
+async with Server(port=9001) as server:
+    @server.on_payload(0x1001)
+    async def handle(hdl, data: str):
+        result = await process_data(data)
+        server.send(hdl, PayloadBuilder(0x1002).add_param(result).build())
+    await asyncio.Future()  # run forever
+
+# Client
+async with Client(server.public_key, uri="ws://localhost:9001") as client:
+    @client.on_ready
+    def ready():
+        client.send(PayloadBuilder(0x1001).add_param("Hello").build())
+    await asyncio.Future()  # run forever
+```
+
+## Request Timeouts
+
+Every async request API accepts a `timeout` parameter in **seconds** (float, default `30.0`). If the remote side does not respond in time, `ObscuraProto.TimeoutError` is raised:
+
+```python
+import logging
+from ObscuraProto import Client, TimeoutError
+
+logger = logging.getLogger(__name__)
+
+async def request_with_timeout(client: Client, payload) -> None:
+    try:
+        response = await client.async_request(payload, timeout=5.0)
+        print(f"Response: {response.op_code:04x}")
+    except TimeoutError:
+        logger.warning("request timed out, continuing")
+```
+
+Timeout-aware request APIs:
+
+- `Client.async_request(payload, timeout=30.0)`
+- `Server.async_request(hdl, payload, timeout=30.0)`
+- `Server.async_request_to_identity(identity_pk, payload, timeout=30.0)`
+
+The timeout is enforced on the Python side (`asyncio.wait_for`) while the C++ response is awaited without blocking the event loop.
+
+The underlying C++ bindings additionally expose `sync_request(payload, timeout_ms)` and `async_request(payload, timeout_ms)` overloads on the raw client binding, where `timeout_ms` is in **milliseconds** and `0` means **no limit**. The Python-level `sync_request` is blocking and does not take a timeout.
+
+## Logging
+
+The library uses Python's `logging` module under the `ObscuraProto` logger with a NullHandler by default. Users can configure logging as needed:
+
+```python
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("ObscuraProto")
+logger.setLevel(logging.DEBUG)  # Enable debug logging
+```
+
+## Error Handling
+
+Errors in handlers are raised (not silently swallowed), unless an on_error handler is set. Users should catch exceptions at the business logic level. Use error handlers to set custom error handling:
+
+```python
+# Server error handler
+@server.on_error
+def handle_error(error: Exception):
+    print(f"Server callback error: {error}")
+
+# Client error handler
+@client.on_error
+def handle_error(error: Exception):
+    print(f"Client callback error: {error}")
+
+# Stream error handler
+@stream.on_error
+def handle_error(error: Exception):
+    print(f"Stream callback error: {error}")
+```
+
+**Identity handler return value:** The `@server.on_client_identity` handler must return `bool` — `True` to accept, `False` to reject. Returning `None` is coerced to `False` (both sync and async handlers).
+
+### Typed exceptions
+
+Since 1.1.1, C++ exceptions are mapped to typed Python exceptions instead of a generic `RuntimeError`:
+
+| Exception | Python base class | Raised when |
+|---|---|---|
+| `ObscuraProto.TimeoutError` | builtin `TimeoutError` | an async request did not respond within `timeout` |
+| `ObscuraProto.LogicError` | `RuntimeError` | a blocking call from a callback/IO thread (deadlock guard), or awaiting a single-use `CppPayloadFuture` twice |
+| `ObscuraProto.InvalidArgument` | `ValueError` | invalid arguments surfaced from C++ (e.g. wrong key size) |
+
+Base-class `except` clauses keep working, so `except TimeoutError`, `except RuntimeError` and `except ValueError` all catch the corresponding ObscuraProto exceptions:
+
+```python
+from ObscuraProto import Client, PayloadBuilder, TimeoutError, LogicError
+
+async def guarded_request(client: Client):
+    try:
+        response = await client.async_request(PayloadBuilder(0x1001).build(), timeout=2.0)
+        return response
+    except TimeoutError:
+        print("server did not answer in time")
+    except LogicError:
+        print("request already consumed or called from a callback thread")
 ```
 
 ## Anonymous & Authenticated Sessions
@@ -187,7 +311,6 @@ def check_identity(hdl: op.ConnectionHdl, pk: op.PublicKey) -> bool:
 
 # --- Client ---
 client = op.Client(server.public_key)
-client.set_client_identity(my_identity_keypair)  # Ed25519 keypair
 client.connect("ws://localhost:9001")
 
 # Server can now address this client by identity:
@@ -196,6 +319,38 @@ identity = server.get_client_identity(hdl)
 ```
 
 Full example: [examples/client_identity_example.cpp](https://github.com/ObscuraEcosystem/ObscuraProto/blob/main/examples/client_identity_example.cpp)
+
+## Threading Model & Deadlock Protection
+
+The C++ websocket layer invokes Python callbacks on its own I/O threads. Blocking calls made from inside such a callback would self-deadlock — the very thread that must service the request is the one making it. Since 1.1.1 the bindings detect this with a thread-local callback flag and raise `ObscuraProto.LogicError` instead of hanging:
+
+- `Client.sync_request()` / `Server.sync_request()` / `sync_request_to_identity()` — raise `LogicError` when called from a callback thread
+- `Server.stop()` and `Client.disconnect()` — raise `LogicError` when called from a callback thread (self-join guard)
+
+```python
+from ObscuraProto import Client, LogicError
+
+def on_ready(client: Client):
+    try:
+        client.disconnect()
+    except LogicError:
+        print("disconnect() is not allowed from a callback thread")
+```
+
+Calling a blocking `sync_request` from an **async handler** (the event-loop thread) emits a warning ("sync_request is blocking and must not be called from an async handler") because it would stall the event loop. From inside handlers, use `await async_request()` instead:
+
+```python
+from ObscuraProto import Server, PayloadBuilder
+
+@server.on_payload(0x1001)
+async def handle(hdl, data: str):
+    # Wrong: sync_request would stall the event loop / deadlock the I/O thread
+    # response = server.sync_request(hdl, PayloadBuilder(0x1002).build())
+    # Correct:
+    response = await server.async_request(hdl, PayloadBuilder(0x1002).build())
+```
+
+Stream operations and async request futures run on dedicated module-level thread pools: a single-worker stream executor preserves FIFO ordering of `write`/`end`/`cancel`, and a separate 4-worker request executor waits on C++ response futures without blocking the event loop.
 
 ## Configuration
 
@@ -247,19 +402,65 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | `timeouts.idle_ms` | `300000` | Idle connection timeout (ms) |
 | `timeouts.check_interval_ms` | `5000` | Timeout check interval (ms) |
 
+## RateLimiter & SecureBuffer
+
+Standalone low-level bindings added in 1.1.1. For the built-in connection handling prefer the `Config.rate_limit` settings above; these classes are for custom rate enforcement and secure key material.
+
+### RateLimiter
+
+Token-bucket plus sliding-window rate enforcement, built from a `RateLimitConfig`:
+
+```python
+from ObscuraProto import RateLimiter, RateLimitConfig
+
+cfg = RateLimitConfig()
+cfg.enabled = True
+cfg.messages_per_second = 100
+cfg.burst_size = 200
+rl = RateLimiter(cfg)
+
+conn_id = rl.register_connection("203.0.113.7")   # returns an int connection id
+if rl.check_message_rate(conn_id):
+    rl.record_message(conn_id)
+rl.unregister_connection(conn_id, "203.0.113.7")
+```
+
+Methods: `check_connection_rate(ip)`, `record_connection(ip)`, `check_handshake_rate(ip)`, `record_handshake(ip)`, `check_message_rate(conn_id)`, `record_message(conn_id)`, `check_active_connections(ip)`, `register_connection(ip)`, `unregister_connection(conn_id, ip)`, `active_total()`, `cleanup()`.
+
+### SecureBuffer
+
+Heap memory allocated with `sodium_malloc` and zeroed with `sodium_memzero` on `clear()` and destruction. Python only ever receives **copies** of the contents, never a reference to the internal memory:
+
+```python
+from ObscuraProto import SecureBuffer
+
+buf = SecureBuffer(32)             # zero-initialized allocation
+buf.from_bytes(b"secret-key-material")
+data = buf.to_bytes()              # copy — internal memory stays opaque
+len(buf)                           # 19
+buf.clear()                        # wipes memory with sodium_memzero
+```
+
+Additional methods: `resize(new_size)`, `size()`, `empty()`; supports `bytes(buf)` and `len(buf)`.
+
 ## API Reference
 
 | Class / Function | Description |
 |---|---|
-| `Server` | Encrypted WebSocket server. Decorators: `@on_payload(opcode)`, `@on_request(opcode)`, `@on_anon_payload(opcode)`, `@on_anon_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)`, `@on_anon_stream(opcode)`, `@default_payload_handler`, `@anon_default_payload_handler`, `@on_client_identity`, `@on_open`, `@on_close` |
-| `Client(server_pk)` | Encrypted WebSocket client. Decorators: `@on_ready`, `@on_disconnect`, `@on_payload(opcode)`, `@on_request(opcode)`, `@on_incoming_stream`, `@on_stream(opcode)` |
-| `Stream` | Bidirectional data stream. Decorators: `@on_data`, `@on_end`, `@on_cancel`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()`. Properties: `stream_id`, `op_code` |
+| `Server` | Encrypted WebSocket server. Decorators: `@server.on_payload(op_code)`, `@server.on_request(op_code)`, `@server.on_open`, `@server.on_close`, `@server.on_client_identity`, `@server.on_incoming_stream`, `@server.on_stream(op_code)`, `@server.on_anon_payload(op_code)`, `@server.on_anon_request(op_code)`, `@server.on_anon_stream(op_code)`, `@server.anon_default_payload_handler`, `@server.on_error`. Requests: `sync_request(hdl, payload)`, `async_request(hdl, payload, timeout=30.0)`, `async_request_to_identity(identity_pk, payload, timeout=30.0)` |
+| `Client` | Encrypted WebSocket client. Decorators: `@client.on_ready`, `@client.on_disconnect`, `@client.on_payload(op_code)`, `@client.on_request(op_code)`, `@client.on_incoming_stream`, `@client.on_stream(op_code)`, `@client.on_error`. Requests: `sync_request(payload)`, `async_request(payload, timeout=30.0)` |
+| `Stream` | Bidirectional data stream. Decorators: `@stream.on_data`, `@stream.on_end`, `@stream.on_cancel`, `@stream.on_error` |
 | `PayloadBuilder(opcode)` | Build binary payloads. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
 | `PayloadReader(payload)` | Read binary payloads. `read_string()`, `read_int()`, `read_uint()`, `read_bool()`, `read_float()`, `read_bytes()` |
 | `Payload` | Raw payload with `.op_code` and `.parameters`. Has `.serialize()` / `Payload.deserialize()` |
 | `uint` | Type hint marker: `def handler(value: uint)` reads the parameter as unsigned |
 | `Config` | Server/client configuration. Sub-structs: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`, `supported_versions`. Methods: `from_yaml(path)`, `with_defaults()` |
-| `Crypto` | Static crypto: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` |
+| `Crypto` | Static crypto: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` — `decrypt()` returns a `DecryptedResult` |
+| `DecryptedResult` | Result of `Crypto.decrypt()`: fields `payload` (`Payload`) and `counter` |
+| `RateLimiter(config)` | Token-bucket / sliding-window rate limiter built from a `RateLimitConfig`. Methods: `check_connection_rate(ip)`, `record_connection(ip)`, `check_handshake_rate(ip)`, `record_handshake(ip)`, `check_message_rate(conn_id)`, `record_message(conn_id)`, `check_active_connections(ip)`, `register_connection(ip)`, `unregister_connection(conn_id, ip)`, `active_total()`, `cleanup()` |
+| `RateLimitConfig` | Configuration for `RateLimiter`: `enabled`, `messages_per_second`, `burst_size`, `handshake_attempts_per_minute`, `connections_per_minute`; static `defaults()` |
+| `SecureBuffer` | Secure heap memory (sodium): `SecureBuffer(size=0)`, `to_bytes()`, `from_bytes(data)`, `clear()` (`sodium_memzero`), `resize(new_size)`, `size()`, `empty()`; supports `bytes()` and `len()` |
+| `TimeoutError` / `LogicError` / `InvalidArgument` | Typed exceptions: subclass of builtin `TimeoutError` / `RuntimeError` / `ValueError` respectively |
 | `KeyPair` / `PublicKey` / `PrivateKey` | Key types with `.data` field |
 | `ConnectionHdl` | Opaque connection handle for targeting specific clients |
 | `V1_0`, `V1_1` | Protocol version constants |
@@ -288,6 +489,31 @@ pre-commit install
 - **Pre-commit** — runs checks before every commit
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+
+## Known Issues
+
+### C++ Timing Window — `Server.stop()` Race Condition
+
+Calling `Server.stop()` before the accept loop has fully initialized can hang indefinitely (~20ms race condition between thread startup and stop signal).
+
+**Mitigation:** Keep the server alive briefly after handshake completes before exiting the context manager, or add a small delay before stopping:
+
+```python
+async with Server(port=9001) as server:
+    # ... setup handlers ...
+    await asyncio.sleep(0.1)  # allow accept loop to initialize
+    # ... run server ...
+# context manager exit calls stop() safely
+```
+
+### Flaky Integration Test — `test_full_cycle_v1_1`
+
+The test `tests/integration/test_full_cycle.py::test_full_cycle_v1_1` is timing-sensitive and may fail intermittently under heavy load. It passes reliably when run in isolation.
+
+```bash
+# Run in isolation to verify
+python -m pytest tests/integration/test_full_cycle.py::test_full_cycle_v1_1 -v
+```
 
 ## License
 

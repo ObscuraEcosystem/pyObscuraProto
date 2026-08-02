@@ -665,3 +665,115 @@ def test_anon_default_handler(crypto_init, capsys):
         captured = capsys.readouterr()
         if captured.out:
             print(captured.out)
+
+
+def test_client_async_request_polling_bridge(crypto_init, capsys):
+    """
+    Client.async_request uses the CppPayloadFuture polling bridge (Phase 7).
+
+    The C++ async_request() returns a CppPayloadFuture immediately (no thread-pool
+    thread is blocked); the event loop polls ready() and only calls get() when the
+    response has arrived.
+    """
+    port = _next_port()
+    print(f"\n[TEST] test_client_async_request_polling_bridge on port {port}")
+
+    client_ready = threading.Event()
+
+    server = op.Server()
+
+    @server.on_anon_request(OP_ECHO)
+    def handle_echo(hdl: op.ConnectionHdl, msg: str) -> op.Payload:
+        return op.PayloadBuilder(OP_ECHO).add_param(f"resp: {msg}").build()
+
+    client = op.Client(server.public_key)
+
+    @client.on_ready
+    def on_ready():
+        print("[CLIENT] Ready")
+        client_ready.set()
+
+    try:
+        server.start(port)
+        time.sleep(0.1)
+
+        client.connect(f"ws://localhost:{port}")
+        assert client_ready.wait(timeout=5), "Client did not become ready"
+
+        async def run_async_request():
+            return await client.async_request(op.PayloadBuilder(OP_ECHO).add_param("bridge").build())
+
+        response = asyncio.run(run_async_request())
+        assert response.op_code == OP_ECHO, f"Expected OP_ECHO, got 0x{response.op_code:04x}"
+        reader = op.PayloadReader(response)
+        assert reader.read_string() == "resp: bridge", "Unexpected response value"
+        print("[TEST] test_client_async_request_polling_bridge PASSED")
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        captured = capsys.readouterr()
+        if captured.out:
+            print(captured.out)
+
+
+def test_server_async_request_polling_bridge(crypto_init, capsys):
+    """
+    Server.async_request(hdl, payload) uses the CppPayloadFuture polling bridge.
+
+    The server initiates a request to a connected anonymous client and awaits the
+    response via the CppPayloadFuture polling loop.
+    """
+    port = _next_port()
+    print(f"\n[TEST] test_server_async_request_polling_bridge on port {port}")
+
+    client_ready = threading.Event()
+    server_done = threading.Event()
+
+    server = op.Server()
+
+    @server.on_anon_payload(OP_PING)
+    def handle_ping(hdl: op.ConnectionHdl, msg: str):
+        def do_request():
+            try:
+                async_resp = asyncio.run(
+                    server.async_request(hdl, op.PayloadBuilder(OP_ECHO).add_param("srv ping").build())
+                )
+                assert async_resp.op_code == OP_ECHO, f"Expected OP_ECHO, got 0x{async_resp.op_code:04x}"
+                async_reader = op.PayloadReader(async_resp)
+                assert async_reader.read_string() == "pong ok", "Unexpected response value"
+                server_done.set()
+            except Exception as e:
+                print(f"[SERVER] Error in request thread: {e}")
+
+        threading.Thread(target=do_request, daemon=True).start()
+
+    client = op.Client(server.public_key)
+
+    @client.on_request(OP_ECHO)
+    def handle_echo_request(msg: str) -> op.Payload:
+        return op.PayloadBuilder(OP_ECHO).add_param("pong ok").build()
+
+    @client.on_ready
+    def on_ready():
+        print("[CLIENT] Ready")
+        client_ready.set()
+
+    try:
+        server.start(port)
+        time.sleep(0.1)
+
+        client.connect(f"ws://localhost:{port}")
+        assert client_ready.wait(timeout=5), "Client did not become ready"
+
+        client.send(op.PayloadBuilder(OP_PING).add_param("trigger").build())
+        assert server_done.wait(timeout=5), "Server async_request did not complete"
+
+        print("[TEST] test_server_async_request_polling_bridge PASSED")
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        captured = capsys.readouterr()
+        if captured.out:
+            print(captured.out)

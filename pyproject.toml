@@ -15,6 +15,7 @@ manylinux-aarch64-image = "manylinux_2_28"
 [tool.ruff]
 target-version = "py313"
 line-length = 120
+extend-exclude = ["tests/audit_p0"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -25,7 +26,7 @@ docstring-code-format = true
 
 [tool.pyright]
 include = ["src", "tests", "examples"]
-exclude = ["build", "**/__pycache__"]
+exclude = ["build", "**/__pycache__", "tests/audit_p0"]
 typeCheckingMode = "basic"
 reportMissingImports = "warning"
 reportMissingTypeStubs = "warning"
