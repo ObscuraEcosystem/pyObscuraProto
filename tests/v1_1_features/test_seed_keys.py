@@ -212,6 +212,177 @@ def test_async_request_python_passthrough_timeout(crypto_init, capsys):
         capsys.readouterr()
 
 
+# --- High-level Python passthrough (Client.sync_request(timeout_ms), timeout<=0 unlimited) ---
+
+
+def test_client_sync_request_timeout_ms_passthrough_success(crypto_init, capsys):
+    """Client.sync_request(payload, timeout_ms) forwards to the C++ overload and returns."""
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.close()
+
+    server = op.Server()
+    echo_called = threading.Event()
+
+    @server.on_anon_request(0x7E01)
+    def echo_handler(a: int) -> op.Payload:
+        echo_called.set()
+        return op.PayloadBuilder(0x7E02).add_param(a * 3).build()
+
+    server.start(port)
+    time.sleep(0.3)
+
+    client = op.Client(server.public_key)
+    ready = threading.Event()
+    client.on_ready(ready.set)
+
+    try:
+        client.connect(f"ws://localhost:{port}")
+        assert ready.wait(timeout=5), "Client did not become ready"
+
+        payload = op.PayloadBuilder(0x7E01).add_param(14).build()
+        response = client.sync_request(payload, timeout_ms=5000)
+        assert response.op_code == 0x7E02
+        assert op.PayloadReader(response).read_int() == 42
+        assert echo_called.is_set()
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        capsys.readouterr()
+
+
+def test_client_sync_request_timeout_ms_raises_on_silent_server(crypto_init, capsys):
+    """High-level Client.sync_request(payload, timeout_ms) surfaces op.TimeoutError."""
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.close()
+
+    server = op.Server()
+    server.start(port)
+    time.sleep(0.3)
+
+    client = op.Client(server.public_key)
+    ready = threading.Event()
+    client.on_ready(ready.set)
+
+    try:
+        client.connect(f"ws://localhost:{port}")
+        assert ready.wait(timeout=5), "Client did not become ready"
+
+        payload = op.PayloadBuilder(0x7E11).build()
+        t0 = time.monotonic()
+        with pytest.raises(op.TimeoutError):
+            client.sync_request(payload, timeout_ms=250)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 5.0, f"Timed out too late: {elapsed:.3f}s"
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        capsys.readouterr()
+
+
+def test_async_request_timeout_zero_is_unlimited(crypto_init, capsys):
+    """timeout<=0 must disable the Python wait_for guard, not raise TimeoutError fast.
+
+    A responding server with a slow handler (300ms) would trip a Python-side
+    wait_for of 50ms, but with timeout=0 the C++ layer owns the timeout, so
+    the response must come through.
+    """
+    import asyncio
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.close()
+
+    server = op.Server()
+
+    @server.on_anon_request(0x7E21)
+    def slow_echo_handler(a: int) -> op.Payload:
+        time.sleep(0.3)
+        return op.PayloadBuilder(0x7E22).add_param(a + 1).build()
+
+    server.start(port)
+    time.sleep(0.3)
+
+    client = op.Client(server.public_key)
+    ready = threading.Event()
+    client.on_ready(ready.set)
+
+    try:
+        client.connect(f"ws://localhost:{port}")
+        assert ready.wait(timeout=5), "Client did not become ready"
+
+        payload = op.PayloadBuilder(0x7E21).add_param(41).build()
+
+        async def run():
+            return await client.async_request(payload, timeout=0)
+
+        t0 = time.monotonic()
+        response = asyncio.run(run())
+        elapsed = time.monotonic() - t0
+        assert response.op_code == 0x7E22
+        assert op.PayloadReader(response).read_int() == 42
+        assert elapsed >= 0.2, f"Responded too fast ({elapsed:.3f}s): handler sleep not honored"
+        assert elapsed < 5.0, f"Responded too late: {elapsed:.3f}s"
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        capsys.readouterr()
+
+
+def test_async_request_negative_timeout_is_unlimited(crypto_init, capsys):
+    """timeout=-1 behaves like timeout=0: no Python wait_for, C++ owns timeout."""
+    import asyncio
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.close()
+
+    server = op.Server()
+
+    @server.on_anon_request(0x7E31)
+    def echo_handler(a: int) -> op.Payload:
+        return op.PayloadBuilder(0x7E32).add_param(a + 2).build()
+
+    server.start(port)
+    time.sleep(0.3)
+
+    client = op.Client(server.public_key)
+    ready = threading.Event()
+    client.on_ready(ready.set)
+
+    try:
+        client.connect(f"ws://localhost:{port}")
+        assert ready.wait(timeout=5), "Client did not become ready"
+
+        payload = op.PayloadBuilder(0x7E31).add_param(40).build()
+
+        async def run():
+            return await client.async_request(payload, timeout=-1)
+
+        response = asyncio.run(run())
+        assert response.op_code == 0x7E32
+        assert op.PayloadReader(response).read_int() == 42
+    finally:
+        client.disconnect()
+        server.stop()
+        time.sleep(0.1)
+        capsys.readouterr()
+
+
 # --- Stream noexcept contract ---
 
 
