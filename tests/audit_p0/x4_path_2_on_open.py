@@ -34,6 +34,7 @@ def accept_identity(hdl, pk):
 
 
 out = {}
+opened = threading.Event()
 
 
 @server.on_open
@@ -46,6 +47,8 @@ def on_open(hdl):
     except Exception as e:  # noqa: BLE001
         out["res"] = f"OTHER {type(e).__name__}: {e}"
     print(f"RESULT: PASS {out['res']}" if out["res"].startswith("GUARD") else f"RESULT: FAIL {out['res']}")
+    sys.stdout.flush()
+    opened.set()
 
 
 server.start(port)
@@ -65,7 +68,11 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.3)
+if not opened.wait(timeout=8):
+    print("RESULT: FAIL on_open-not-called")
+    sys.stdout.flush()
+    os._exit(1)
 sys.stdout.flush()
 os._exit(0 if "GUARD" in out.get("res", "") else 1)

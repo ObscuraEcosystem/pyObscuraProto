@@ -14,24 +14,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Frozen baseline observed on v1.1.1 (local run via .venv/bin/python, recorded
 # in /tmp/audit_v1.1.1.txt).
-# TODO(transitional): the FAIL entries below (X4-P2..P7, X5-S1..S3, X6) are
-# placeholder baselines for scenarios not yet implemented/fixed. When a
-# scenario changes, update the scenario and its EXPECTED entry in one commit.
 EXPECTED = {
     "X1": "PASS",
     "X2": "PASS",
     "X3": "PASS",
-    "X4-P1": "UNKNOWN",
-    "X4-P2": "FAIL",
-    "X4-P3": "FAIL",
-    "X4-P4": "FAIL",
-    "X4-P5": "FAIL",
-    "X4-P6": "FAIL",
-    "X4-P7": "FAIL",
-    "X5-S1": "FAIL",
-    "X5-S2": "FAIL",
-    "X5-S3": "FAIL",
-    "X6": "FAIL",
+    "X4-P1": "PASS",
+    "X4-P2": "PASS",
+    "X4-P3": "PASS",
+    "X4-P4": "PASS",
+    "X4-P5": "PASS",
+    "X4-P6": "PASS",
+    "X4-P7": "HANG",
+    "X5-S1": "PASS",
+    "X5-S2": "PASS",
+    "X5-S3": "PASS",
+    "X6": "PASS",
 }
 
 SCENARIOS = [

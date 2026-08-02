@@ -65,7 +65,7 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.2)
 
 resp = client.sync_request(op.PayloadBuilder(0x4101).add_param("x").build())

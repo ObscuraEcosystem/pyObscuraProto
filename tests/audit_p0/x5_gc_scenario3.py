@@ -46,13 +46,14 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.3)
 
 holder = {"server": server}
 ref = weakref.ref(server)
 t0 = time.monotonic()
 holder["server"] = None
+del server
 gc.collect()
 dt = time.monotonic() - t0
 cleared = ref() is None

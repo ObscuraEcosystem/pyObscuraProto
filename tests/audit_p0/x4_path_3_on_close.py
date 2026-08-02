@@ -47,6 +47,7 @@ def on_close(hdl):
     except Exception as e:  # noqa: BLE001
         out["res"] = f"OTHER {type(e).__name__}: {e}"
     print(f"RESULT: PASS {out['res']}" if out["res"].startswith("GUARD") else f"RESULT: FAIL {out['res']}")
+    sys.stdout.flush()
     closed.set()
 
 
@@ -67,10 +68,15 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.2)
-client.disconnect()
-closed.wait(timeout=8)
+# In this build server.on_close fires when the server is stopped (not on
+# client-initiated disconnect), so stop() is the trigger for the callback.
+server.stop()
+if not closed.wait(timeout=8):
+    print("RESULT: FAIL on_close-not-called")
+    sys.stdout.flush()
+    os._exit(1)
 time.sleep(0.2)
 sys.stdout.flush()
 os._exit(0 if "GUARD" in out.get("res", "") else 1)

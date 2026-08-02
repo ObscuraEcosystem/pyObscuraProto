@@ -22,7 +22,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 import faulthandler  # noqa: E402
 
 faulthandler.enable()
-faulthandler.dump_traceback_later(10, exit=True)
+# X6 needs ~11-12s of wall time (2+1+2s sync probes + 6s pending check), so the
+# shared 10s backstop would kill it before RESULT: PASS. Use a 25s backstop.
+faulthandler.dump_traceback_later(25, exit=True)
 
 import ObscuraProto as op  # noqa: E402
 from ObscuraProto import _bindings  # noqa: E402
@@ -64,7 +66,7 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.3)
 
 req = op.PayloadBuilder(0x6001).add_param("x").build()
@@ -128,9 +130,6 @@ async def main():
     )
     print("RESULT: PASS timeout-semantics-observed")
     sys.stdout.flush()
-
-
-os._exit(0)
 
 
 asyncio.run(main())

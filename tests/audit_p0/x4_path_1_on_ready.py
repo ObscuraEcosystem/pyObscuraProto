@@ -6,6 +6,7 @@ OR clean operation without hanging.
 
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
@@ -45,6 +46,7 @@ client.attach_event_loop()
 client.set_client_identity(op.Crypto.generate_sign_keypair())
 
 out = {}
+on_ready_called = threading.Event()
 
 
 @client.on_ready
@@ -58,11 +60,16 @@ def on_ready():
         out["res"] = f"OTHER {type(e).__name__}: {e}"
     print(f"RESULT: PASS {out['res']}" if out["res"].startswith("GUARD") else f"RESULT: FAIL {out['res']}")
     sys.stdout.flush()
-
-
-os._exit(0)
+    on_ready_called.set()
+    os._exit(0 if "GUARD" in out.get("res", "") else 1)
 
 
 client.connect(f"ws://localhost:{port}")
+if not on_ready_called.wait(timeout=8):
+    print("RESULT: FAIL on_ready-not-called")
+    sys.stdout.flush()
+    os._exit(1)
+# on_ready calls os._exit, so control normally never reaches here; loop as a
+# safety net so the process stays alive if the exit path ever changes.
 while True:
     time.sleep(0.1)

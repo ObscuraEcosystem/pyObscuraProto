@@ -30,6 +30,7 @@ server = op.Server(config=cfg)
 server.attach_event_loop()
 
 out = {}
+identity_seen = threading.Event()
 
 
 @server.on_client_identity
@@ -42,6 +43,8 @@ def check_identity(hdl: op.ConnectionHdl, pk: _bindings.PublicKey) -> bool:
     except Exception as e:  # noqa: BLE001
         out["res"] = f"OTHER {type(e).__name__}: {e}"
     print(f"RESULT: PASS {out['res']}" if out["res"].startswith("GUARD") else f"RESULT: FAIL {out['res']}")
+    sys.stdout.flush()
+    identity_seen.set()
     return True
 
 
@@ -62,7 +65,11 @@ client.connect(f"ws://localhost:{port}")
 if not ready.wait(timeout=8):
     print("RESULT: FAIL client not ready")
     sys.stdout.flush()
-os._exit(1)
+    os._exit(1)
 time.sleep(0.3)
+if not identity_seen.wait(timeout=8):
+    print("RESULT: FAIL identity-handler-not-invoked")
+    sys.stdout.flush()
+    os._exit(1)
 sys.stdout.flush()
 os._exit(0 if "GUARD" in out.get("res", "") else 1)

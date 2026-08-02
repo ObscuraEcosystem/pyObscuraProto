@@ -72,7 +72,7 @@ async def main():
     if not ready.wait(timeout=8):
         print("RESULT: FAIL client not ready")
         sys.stdout.flush()
-os._exit(1)
+        os._exit(1)
     await asyncio.sleep(0.2)
 
     t0 = time.monotonic()
@@ -80,13 +80,13 @@ os._exit(1)
         await client.async_request(op.PayloadBuilder(0x4101).add_param("x").build(), timeout=8.0)
         print("RESULT: FAIL client request unexpectedly succeeded")
         sys.stdout.flush()
-os._exit(1)
+        os._exit(1)
     except op.TimeoutError:
         dt = time.monotonic() - t0
         print(f"X4-P7 client request timed out after {dt:.2f}s; server raw handler still {out.get('res','PENDING')}")
         print("RESULT: HANG raw-path io-thread deadlock confirmed (no guard; infinite sync_request get)")
         sys.stdout.flush()
-os._exit(1)
+        os._exit(1)
 
 
 asyncio.run(main())
