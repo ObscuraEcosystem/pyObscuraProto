@@ -14,6 +14,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Frozen baseline observed on v1.1.1 (local run via .venv/bin/python, recorded
 # in /tmp/audit_v1.1.1.txt).
+# TODO(transitional): the FAIL entries below (X4-P2..P7, X5-S1..S3, X6) are
+# placeholder baselines for scenarios not yet implemented/fixed. When a
+# scenario changes, update the scenario and its EXPECTED entry in one commit.
 EXPECTED = {
     "X1": "PASS",
     "X2": "PASS",
@@ -98,13 +101,21 @@ def run_one(py, name, script):
         detail = parts[2] if len(parts) > 2 else ""
         if status == "HANG":
             return name, "HANG", wall, out, detail
+        # The RESULT line is the scenario's self-reported verdict, but the
+        # subprocess exit code is authoritative. Declared PASS + non-zero exit
+        # means the check logic itself crashed -> downgrade to FAIL. The
+        # reverse flip (declared FAIL + exit 0) trusts the run completed and
+        # FAIL is the intended observation; caveat: it masks scenarios that
+        # forget to exit(1) on a real failure.
         if status == "PASS" and proc.returncode != 0:
             status = "FAIL"
         if status == "FAIL" and proc.returncode == 0:
             status = "PASS"
     elif proc.returncode != 0:
         # Non-zero exit without RESULT line: likely faulthandler dump at 10s.
-        if "Current thread" in out and "Traceback" in out:
+        # "Current thread" is the distinctive faulthandler dump header; the
+        # literal word "Traceback" may be absent from a dump.
+        if "Current thread" in out:
             status = "HANG"
         else:
             status = "FAIL"
@@ -120,10 +131,10 @@ def main():
         name, status, wall, out, detail = run_one(py, name, script)
         rows.append((name, status, wall, detail))
         # Print the interesting tail of the output.
-        lines = [l for l in out.splitlines() if l.strip()]
+        lines = [line for line in out.splitlines() if line.strip()]
         tail = lines[-6:]
-        for l in tail:
-            print("  | " + l[:220], flush=True)
+        for line in tail:
+            print("  | " + line[:220], flush=True)
         if status == "HANG":
             print(
                 f"  | [HANG] exit={wall:.1f}s external_timeout={EXTERNAL_TIMEOUT:.0f}s "
@@ -142,7 +153,9 @@ def main():
     mismatches = 0
     for name, status, wall, detail in rows:
         expected = EXPECTED.get(name, "")
-        if status != expected:
+        # Strict UNKNOWN policy: UNKNOWN always diverges (red), regardless of
+        # EXPECTED. User decision; overrides the old lenient UNKNOWN==UNKNOWN.
+        if status == "UNKNOWN" or status != expected:
             mismatches += 1
             match = "NO"
         else:
