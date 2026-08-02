@@ -113,9 +113,14 @@ def run_one(py, name, script):
             status = "PASS"
     elif proc.returncode != 0:
         # Non-zero exit without RESULT line: likely faulthandler dump at 10s.
-        # "Current thread" is the distinctive faulthandler dump header; the
-        # literal word "Traceback" may be absent from a dump.
-        if "Current thread" in out:
+        # CPython >= 3.13 prints "Thread 0x... (most recent call first):" for
+        # every thread, including the current one, so "Current thread" (the
+        # 3.12 header) is never emitted and the dump would be misread as FAIL.
+        # "(most recent call first)" is the structurally unique marker of a
+        # faulthandler thread dump: normal Python tracebacks always say
+        # "(most recent call last)", and the "Timeout (...)" header could
+        # collide with user-facing timeout messages.
+        if "(most recent call first)" in out:
             status = "HANG"
         else:
             status = "FAIL"
