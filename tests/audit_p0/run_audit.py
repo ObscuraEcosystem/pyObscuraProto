@@ -1,13 +1,35 @@
 """Audit runner: spawns every scenario in its own subprocess with an external
 timeout and faulthandler-based thread dumps, then classifies PASS/FAIL/HANG.
+
+The observed statuses for each scenario are frozen in EXPECTED (baseline from
+v1.1.1). The runner exits non-zero if any scenario diverges from EXPECTED.
 """
 
 import os
 import subprocess
+import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PY = os.path.abspath(os.path.join(HERE, "..", "..", ".venv", "bin", "python"))
+
+# Frozen baseline observed on v1.1.1 (local run via .venv/bin/python, recorded
+# in /tmp/audit_v1.1.1.txt).
+EXPECTED = {
+    "X1": "PASS",
+    "X2": "PASS",
+    "X3": "PASS",
+    "X4-P1": "UNKNOWN",
+    "X4-P2": "FAIL",
+    "X4-P3": "FAIL",
+    "X4-P4": "FAIL",
+    "X4-P5": "FAIL",
+    "X4-P6": "FAIL",
+    "X4-P7": "FAIL",
+    "X5-S1": "FAIL",
+    "X5-S2": "FAIL",
+    "X5-S3": "FAIL",
+    "X6": "FAIL",
+}
 
 SCENARIOS = [
     ("X1", "x1_env.py"),
@@ -31,12 +53,27 @@ EXTERNAL_TIMEOUT = 30.0
 DUMP_SECONDS = 10.0
 
 
-def run_one(name, script):
+def resolve_python():
+    """Pick the interpreter used to spawn scenarios.
+
+    Priority: explicit AUDIT_PYTHON override -> the interpreter running this
+    script (sys.executable) -> fallback to the project venv. The env override
+    comes first so CI/local runs can pin a specific build.
+    """
+    override = os.environ.get("AUDIT_PYTHON")
+    if override:
+        return os.path.abspath(override)
+    if sys.executable:
+        return os.path.abspath(sys.executable)
+    return os.path.abspath(os.path.join(HERE, "..", "..", ".venv", "bin", "python"))
+
+
+def run_one(py, name, script):
     path = os.path.join(HERE, script)
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
-            [PY, path],
+            [py, path],
             capture_output=True,
             text=True,
             timeout=EXTERNAL_TIMEOUT,
@@ -75,10 +112,12 @@ def run_one(name, script):
 
 
 def main():
+    py = resolve_python()
+    print(f"audit python: {py}", flush=True)
     rows = []
     for name, script in SCENARIOS:
         print(f"=== {name} ({script}) ===", flush=True)
-        name, status, wall, out, detail = run_one(name, script)
+        name, status, wall, out, detail = run_one(py, name, script)
         rows.append((name, status, wall, detail))
         # Print the interesting tail of the output.
         lines = [l for l in out.splitlines() if l.strip()]
@@ -97,6 +136,28 @@ def main():
     print("SUMMARY")
     for name, status, wall, detail in rows:
         print(f"{name:8s} | {status:7s} | wall={wall:6.1f}s | {detail[:160]}", flush=True)
+
+    print("=" * 70)
+    print("EXPECTED vs ACTUAL")
+    mismatches = 0
+    for name, status, wall, detail in rows:
+        expected = EXPECTED.get(name, "")
+        if status != expected:
+            mismatches += 1
+            match = "NO"
+        else:
+            match = "yes"
+        print(
+            f"{name:8s} | expected={expected:7s} | actual={status:7s} | match={match}",
+            flush=True,
+        )
+
+    print("=" * 70)
+    if mismatches:
+        print(f"AUDIT DIVERGED: {mismatches} mismatch(es) vs EXPECTED", flush=True)
+        sys.exit(1)
+    print("AUDIT OK: all scenarios match EXPECTED", flush=True)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
