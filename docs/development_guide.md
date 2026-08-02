@@ -83,4 +83,7 @@ Exit codes: `0` — every scenario matches `EXPECTED`; `1` — at least one dive
 - The rule: change a scenario and its `EXPECTED` entry in **one commit** — never flip `EXPECTED` separately from the scenario code that justifies it.
 - `UNKNOWN` is **always red**: a scenario reporting `UNKNOWN` fails the run regardless of the `EXPECTED` value.
 - `HANG` is detected from faulthandler thread dumps: CPython 3.13+ prints `Thread 0x... (most recent call first):`, and the structurally unique marker `"(most recent call first)"` is what the runner greps for. Do not rely on exit codes alone — a scenario may also print its own `RESULT: HANG ...` line.
-- The current `FAIL` entries in `EXPECTED` are transitional placeholders with `TODO` — the scenarios themselves are not finished (stubs use `os._exit` / `IndentationError`), so the `audit` job is expected to stay red until they are implemented.
+- `EXPECTED` is green as of baseline v1.1.1: X1–X3 PASS, X4-P1..P6 PASS, X4-P7 HANG, X5-S1..S3 PASS, X6 PASS. The `audit` job is expected to stay green; a red run now means a real regression, not unfinished scenarios.
+- **Known limitation (X5-S2)**: GC during an **active callback** is not exercised — the server does not dispatch handlers under `asyncio.run`. The scenario was redesigned to test GC during an in-flight request instead; the gap is documented, not silently hidden.
+- **X6 is timing-sensitive**: the only scenario of the 14 with timing assertions (five timeout semantics, distances ±1 s, `TimeoutError` type). If it flakes on a loaded CI (~5% risk), inspect the X6-1b assertion point first.
+- **X4-P7 is a self-declared `HANG`**: the scenario deliberately times out (client-side timeout 8 s) and classifies itself as `HANG` — it is expected to hang, not to pass.

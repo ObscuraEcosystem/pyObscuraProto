@@ -1,7 +1,8 @@
 ### Unreleased — 2026-08-02
 
+- **audit_p0 scenarios X4/X5/X6 completed**: all 14 scenarios now assert real behavior — the stubs (`os._exit` / `IndentationError`) are removed. `EXPECTED` is green: X1–X3 PASS, X4-P1..P6 PASS, X4-P7 HANG (self-declared, client-side 8 s timeout), X5-S1..S3 PASS, X6 PASS. X6 asserts five timeout semantics (distances ±1 s, `ObscuraProto.TimeoutError` type); X4-P6 asserts `LogicError` "Session not ready". Known gaps: X5-S2 redesigned (GC during an in-flight request instead of during an active callback — the server does not dispatch handlers under `asyncio.run`); X6 is the only timing-sensitive scenario (~5% flake risk at X6-1b on a loaded CI). Local `AUDIT OK` exit 0, stable over 5/5 runs; the CI `audit` job is expected to be green.
 - **audit_p0 in main CI**: `tests/audit_p0/run_audit.py` now runs in the main `autotests.yml` workflow as the `audit` job (ubuntu-latest, in parallel with `build-and-test`, `timeout-minutes: 25`). The runner freezes observed statuses in the `EXPECTED` table (14 entries, baseline v1.1.1), resolves the interpreter via `AUDIT_PYTHON` → `sys.executable` → `.venv`, treats any `UNKNOWN` as a failure, and exits `1` on divergence, `0` on a full match.
-- **HANG detection fix**: CPython 3.13/3.14 faulthandler thread dumps are detected via the structurally unique `"(most recent call first)"` marker instead of the old heuristic. `FAIL` entries in `EXPECTED` are transitional placeholders with `TODO` — the scenarios are not finalized yet, so the `audit` job is expected to stay red until they are.
+- **HANG detection fix**: CPython 3.13/3.14 faulthandler thread dumps are detected via the structurally unique `"(most recent call first)"` marker instead of the old heuristic.
 
 ### 1.1.1 — 2026-08-02
 
