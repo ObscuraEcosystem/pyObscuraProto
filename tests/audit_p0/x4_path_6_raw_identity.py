@@ -75,7 +75,18 @@ if not ready.wait(timeout=8):
     os._exit(1)
 time.sleep(0.3)
 identity_called.wait(timeout=5)
-print(f"X4-P6 raw-identity sync_request: {out.get('res', 'NOT-CALLED')}")
-print("RESULT: PASS" if identity_called.is_set() else "RESULT: FAIL identity-handler-not-invoked")
+res_str = out.get("res", "NOT-CALLED")
+print(f"X4-P6 raw-identity sync_request: {res_str}")
+# PASS requires BOTH: the handler was invoked AND the raw sync_request raised
+# the CXX LogicError marker "Session not ready" (NO-ERROR would otherwise also
+# satisfy the old identity_called-only verdict).
+if identity_called.is_set() and "Session not ready" in res_str:
+    print("RESULT: PASS")
+    sys.stdout.flush()
+    os._exit(0)
+print(
+    f"RESULT: FAIL identity={identity_called.is_set()} res={res_str!r} "
+    "(expected CXX-LogicError 'Session not ready')"
+)
 sys.stdout.flush()
-os._exit(0 if identity_called.is_set() else 1)
+os._exit(1)
