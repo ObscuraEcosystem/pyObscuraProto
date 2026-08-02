@@ -40,6 +40,17 @@ The `pyObscuraProto` package includes a C++ extension built using CMake and `pyb
     .venv/bin/python setup.py build_ext --inplace
     ```
 
+### C++ Core Version
+
+The C++ core `ObscuraProto` is fetched via CMake `FetchContent`; the pinned version is `v1.1.1` (`GIT_TAG` in `CMakeLists.txt`). This is the only tag that provides the seed API (`keypair_from_seed` / `derive_public_key`).
+
+When the pin is bumped, force a clean rebuild of the C++ sources — `FetchContent` caches the previously fetched sources in the build directory, so an incremental rebuild may keep using the old version:
+
+```bash
+rm -rf build/
+.venv/bin/python setup.py build_ext --inplace   # or: .venv/bin/pip install -e .
+```
+
 ## 3. Running Tests
 
 Tests are written using `pytest` and `pytest-asyncio`.

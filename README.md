@@ -23,7 +23,8 @@ Python wrapper for the [ObscuraProto](https://github.com/anomalyco/ObscuraProto)
 - **Fully typed** — complete Python type annotations; checked with pyright
 - **High performance** — C++ core via pybind11, GIL released during I/O
 - **Typed exceptions** — C++ errors mapped to Python types: `TimeoutError` (builtin), `LogicError` (`RuntimeError`), `InvalidArgument` (`ValueError`)
-- **Request timeouts** — per-request timeout on all async request APIs; responses awaited without blocking the event loop
+- **Request timeouts** — per-request timeout on all request APIs (`sync_request` and async), forwarded to the C++ core; `timeout <= 0` disables the Python-side wrapper
+- **Seed key derivation** — `Crypto.keypair_from_seed()` (strictly 32-byte seeds, otherwise `ValueError`) and `Crypto.derive_public_key()`
 - **Deadlock-safe callbacks** — blocking calls (`sync_request`, `stop`, `disconnect`) from callback/IO threads raise `LogicError` instead of deadlocking
 
 ## Installation
@@ -106,6 +107,8 @@ async with Client(server.public_key, uri="ws://localhost:9006") as client:
 ```
 
 Full example: [examples/streaming_example.py](examples/streaming_example.py)
+
+Since v1.1.1, `write()`, `end()` and `cancel()` are `noexcept` — after the stream is closed they silently drop the call instead of raising an exception.
 
 ### Stream Properties
 
@@ -208,13 +211,14 @@ async def request_with_timeout(client: Client, payload) -> None:
 
 Timeout-aware request APIs:
 
+- `Client.sync_request(payload, timeout_ms=...)`
 - `Client.async_request(payload, timeout=30.0)`
 - `Server.async_request(hdl, payload, timeout=30.0)`
 - `Server.async_request_to_identity(identity_pk, payload, timeout=30.0)`
 
-The timeout is enforced on the Python side (`asyncio.wait_for`) while the C++ response is awaited without blocking the event loop.
+Every Python API forwards its timeout to the C++ core: `Client.sync_request` takes `timeout_ms` (milliseconds, `0` = unlimited), while `Client.async_request` and `Server.async_request` take `timeout` in **seconds** and forward it as `timeout_ms`. Passing `timeout <= 0` or `None` disables the Python-side `asyncio.wait_for` — the C++ core then owns the timeout. On expiry, `ObscuraProto.TimeoutError` (a subclass of the builtin `TimeoutError`) is raised.
 
-The underlying C++ bindings additionally expose `sync_request(payload, timeout_ms)` and `async_request(payload, timeout_ms)` overloads on the raw client binding, where `timeout_ms` is in **milliseconds** and `0` means **no limit**. The Python-level `sync_request` is blocking and does not take a timeout.
+The default request timeout is set via `Config.timeouts.request_ms` (default `30000` ms, `0` = unlimited, loadable from YAML).
 
 ## Logging
 
@@ -401,6 +405,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | `timeouts.handshake_ms` | `10000` | Handshake timeout (ms) |
 | `timeouts.idle_ms` | `300000` | Idle connection timeout (ms) |
 | `timeouts.check_interval_ms` | `5000` | Timeout check interval (ms) |
+| `timeouts.request_ms` | `30000` | Request timeout (ms); `0` = unlimited |
 
 ## RateLimiter & SecureBuffer
 
@@ -448,14 +453,14 @@ Additional methods: `resize(new_size)`, `size()`, `empty()`; supports `bytes(buf
 | Class / Function | Description |
 |---|---|
 | `Server` | Encrypted WebSocket server. Decorators: `@server.on_payload(op_code)`, `@server.on_request(op_code)`, `@server.on_open`, `@server.on_close`, `@server.on_client_identity`, `@server.on_incoming_stream`, `@server.on_stream(op_code)`, `@server.on_anon_payload(op_code)`, `@server.on_anon_request(op_code)`, `@server.on_anon_stream(op_code)`, `@server.anon_default_payload_handler`, `@server.on_error`. Requests: `sync_request(hdl, payload)`, `async_request(hdl, payload, timeout=30.0)`, `async_request_to_identity(identity_pk, payload, timeout=30.0)` |
-| `Client` | Encrypted WebSocket client. Decorators: `@client.on_ready`, `@client.on_disconnect`, `@client.on_payload(op_code)`, `@client.on_request(op_code)`, `@client.on_incoming_stream`, `@client.on_stream(op_code)`, `@client.on_error`. Requests: `sync_request(payload)`, `async_request(payload, timeout=30.0)` |
-| `Stream` | Bidirectional data stream. Decorators: `@stream.on_data`, `@stream.on_end`, `@stream.on_cancel`, `@stream.on_error` |
+| `Client` | Encrypted WebSocket client. Decorators: `@client.on_ready`, `@client.on_disconnect`, `@client.on_payload(op_code)`, `@client.on_request(op_code)`, `@client.on_incoming_stream`, `@client.on_stream(op_code)`, `@client.on_error`. Requests: `sync_request(payload, timeout_ms=0)`, `async_request(payload, timeout=30.0)` |
+| `Stream` | Bidirectional data stream. Decorators: `@stream.on_data`, `@stream.on_end`, `@stream.on_cancel`, `@stream.on_error`. `write()`/`end()`/`cancel()` are `noexcept` — after close they silently drop |
 | `PayloadBuilder(opcode)` | Build binary payloads. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
 | `PayloadReader(payload)` | Read binary payloads. `read_string()`, `read_int()`, `read_uint()`, `read_bool()`, `read_float()`, `read_bytes()` |
 | `Payload` | Raw payload with `.op_code` and `.parameters`. Has `.serialize()` / `Payload.deserialize()` |
 | `uint` | Type hint marker: `def handler(value: uint)` reads the parameter as unsigned |
 | `Config` | Server/client configuration. Sub-structs: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`, `supported_versions`. Methods: `from_yaml(path)`, `with_defaults()` |
-| `Crypto` | Static crypto: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` — `decrypt()` returns a `DecryptedResult` |
+| `Crypto` | Static crypto: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `keypair_from_seed(seed)` (strictly 32 bytes, otherwise `ValueError`), `derive_public_key(privkey)`, `sign()`, `verify()`, `encrypt()`, `decrypt()` — `decrypt()` returns a `DecryptedResult` |
 | `DecryptedResult` | Result of `Crypto.decrypt()`: fields `payload` (`Payload`) and `counter` |
 | `RateLimiter(config)` | Token-bucket / sliding-window rate limiter built from a `RateLimitConfig`. Methods: `check_connection_rate(ip)`, `record_connection(ip)`, `check_handshake_rate(ip)`, `record_handshake(ip)`, `check_message_rate(conn_id)`, `record_message(conn_id)`, `check_active_connections(ip)`, `register_connection(ip)`, `unregister_connection(conn_id, ip)`, `active_total()`, `cleanup()` |
 | `RateLimitConfig` | Configuration for `RateLimiter`: `enabled`, `messages_per_second`, `burst_size`, `handshake_attempts_per_minute`, `connections_per_minute`; static `defaults()` |

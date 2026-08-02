@@ -23,7 +23,8 @@ Python-обёртка для C++ библиотеки [ObscuraProto](https://git
 - **Полная типизация** — все аннотации типов Python, проверка через pyright
 - **Высокая производительность** — C++ ядро через pybind11, GIL освобождается во время I/O
 - **Типизированные исключения** — ошибки C++ отображаются в типы Python: `TimeoutError` (встроенный), `LogicError` (`RuntimeError`), `InvalidArgument` (`ValueError`)
-- **Таймауты запросов** — таймаут на каждый запрос во всех async request API; ответы ожидаются без блокировки event loop'а
+- **Таймауты запросов** — таймаут на каждый запрос во всех request API (`sync_request` и async), пробрасывается в C++ ядро; `timeout <= 0` отключает Python-обёртку
+- **Вывод ключей из seed** — `Crypto.keypair_from_seed()` (строго 32 байта, иначе `ValueError`) и `Crypto.derive_public_key()`
 - **Deadlock-безопасные коллбэки** — блокирующие вызовы (`sync_request`, `stop`, `disconnect`) из коллбэк/IO-потоков поднимают `LogicError` вместо зависания
 
 ## Установка
@@ -106,6 +107,8 @@ async with Client(server.public_key, uri="ws://localhost:9006") as client:
 ```
 
 Полный пример: [examples/streaming_example.py](examples/streaming_example.py)
+
+Начиная с v1.1.1, `write()`, `end()` и `cancel()` — `noexcept`: после закрытия стрима вызовы молча игнорируются и не бросают исключений.
 
 ### Свойства Stream
 
@@ -208,13 +211,14 @@ async def request_with_timeout(client: Client, payload) -> None:
 
 Request API с поддержкой таймаута:
 
+- `Client.sync_request(payload, timeout_ms=...)`
 - `Client.async_request(payload, timeout=30.0)`
 - `Server.async_request(hdl, payload, timeout=30.0)`
 - `Server.async_request_to_identity(identity_pk, payload, timeout=30.0)`
 
-Таймаут обеспечивается на стороне Python (`asyncio.wait_for`), при этом ответ C++ ожидается без блокировки event loop'а.
+Каждый Python API пробрасывает таймаут в C++ ядро: `Client.sync_request` принимает `timeout_ms` (миллисекунды, `0` = без ограничений), а `Client.async_request` и `Server.async_request` принимают `timeout` в **секундах** и передают его как `timeout_ms`. Если `timeout <= 0` или `None`, Python-сторонний `asyncio.wait_for` отключается — таймаутом владеет C++ ядро. По истечении поднимается `ObscuraProto.TimeoutError` (подкласс встроенного `TimeoutError`).
 
-Низкоуровневые C++-биндинги дополнительно предоставляют overload'ы `sync_request(payload, timeout_ms)` и `async_request(payload, timeout_ms)` на сыром client-биндинге, где `timeout_ms` задаётся в **миллисекундах**, а `0` означает **без ограничений**. Python-`sync_request` — блокирующий и таймаут не принимает.
+Таймаут запроса по умолчанию задаётся через `Config.timeouts.request_ms` (по умолчанию `30000` мс, `0` = без ограничений, загружается из YAML).
 
 ## Логирование
 
@@ -401,6 +405,7 @@ cfg = op.Config.from_yaml("path/to/config.yml")
 | `timeouts.handshake_ms` | `10000` | Таймаут handshake (мс) |
 | `timeouts.idle_ms` | `300000` | Таймаут бездействия (мс) |
 | `timeouts.check_interval_ms` | `5000` | Интервал проверки таймаутов (мс) |
+| `timeouts.request_ms` | `30000` | Таймаут запроса (мс); `0` = без ограничений |
 | `supported_versions` | `[0x0101, 0x0100]` | Поддерживаемые версии протокола (V1_1 предпочтительнее) |
 
 ## RateLimiter и SecureBuffer
@@ -449,14 +454,14 @@ buf.clear()                        # wipes memory with sodium_memzero
 | Класс / Функция | Описание |
 |---|---|
 | `Server` | Зашифрованный WebSocket-сервер. Декораторы: `@server.on_payload(op_code)`, `@server.on_request(op_code)`, `@server.on_open`, `@server.on_close`, `@server.on_client_identity`, `@server.on_incoming_stream`, `@server.on_stream(op_code)`, `@server.on_anon_payload(op_code)`, `@server.on_anon_request(op_code)`, `@server.on_anon_stream(op_code)`, `@server.anon_default_payload_handler`, `@server.on_error`. Запросы: `sync_request(hdl, payload)`, `async_request(hdl, payload, timeout=30.0)`, `async_request_to_identity(identity_pk, payload, timeout=30.0)` |
-| `Client(server_pk)` | Зашифрованный WebSocket-клиент. Декораторы: `@client.on_ready`, `@client.on_disconnect`, `@client.on_payload(op_code)`, `@client.on_request(op_code)`, `@client.on_incoming_stream`, `@client.on_stream(op_code)`, `@client.on_error`. Запросы: `sync_request(payload)`, `async_request(payload, timeout=30.0)` |
-| `Stream` | Двунаправленный поток данных. Декораторы: `@stream.on_data`, `@stream.on_end`, `@stream.on_cancel`, `@stream.on_error`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()`. Свойства: `stream_id`, `op_code` |
+| `Client(server_pk)` | Зашифрованный WebSocket-клиент. Декораторы: `@client.on_ready`, `@client.on_disconnect`, `@client.on_payload(op_code)`, `@client.on_request(op_code)`, `@client.on_incoming_stream`, `@client.on_stream(op_code)`, `@client.on_error`. Запросы: `sync_request(payload, timeout_ms=0)`, `async_request(payload, timeout=30.0)` |
+| `Stream` | Двунаправленный поток данных. Декораторы: `@stream.on_data`, `@stream.on_end`, `@stream.on_cancel`, `@stream.on_error`. I/O: `write()`, `end()`, `cancel()`, `async_write()`, `async_end()`, `async_cancel()`. Свойства: `stream_id`, `op_code`. `write()`/`end()`/`cancel()` — `noexcept`: после закрытия молча игнорируются |
 | `PayloadBuilder(opcode)` | Сборка бинарных payload'ов. `add_param(str / int / uint / bool / float / bytes)`, `.build()` |
 | `PayloadReader(payload)` | Чтение бинарных payload'ов. `read_string()`, `read_int()`, `read_uint()`, `read_bool()`, `read_float()`, `read_bytes()` |
 | `Payload` | Сырой payload с полями `.op_code` и `.parameters`. Есть `.serialize()` / `Payload.deserialize()` |
 | `uint` | Маркер типа: `def handler(value: uint)` читает параметр как беззнаковое целое |
 | `Config` | Конфигурация сервера/клиента. Подструктуры: `rate_limit`, `connection_limits`, `message_limits`, `timeouts`, `opcodes`, `supported_versions`. Методы: `from_yaml(path)`, `with_defaults()` |
-| `Crypto` | Статические криптооперации: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `sign()`, `verify()`, `encrypt()`, `decrypt()` — `decrypt()` возвращает `DecryptedResult` |
+| `Crypto` | Статические криптооперации: `init()`, `generate_kx_keypair()`, `generate_sign_keypair()`, `keypair_from_seed(seed)` (строго 32 байта, иначе `ValueError`), `derive_public_key(privkey)`, `sign()`, `verify()`, `encrypt()`, `decrypt()` — `decrypt()` возвращает `DecryptedResult` |
 | `DecryptedResult` | Результат `Crypto.decrypt()`: поля `payload` (`Payload`) и `counter` |
 | `RateLimiter(config)` | Лимитер скорости token bucket / скользящее окно, строится из `RateLimitConfig`. Методы: `check_connection_rate(ip)`, `record_connection(ip)`, `check_handshake_rate(ip)`, `record_handshake(ip)`, `check_message_rate(conn_id)`, `record_message(conn_id)`, `check_active_connections(ip)`, `register_connection(ip)`, `unregister_connection(conn_id, ip)`, `active_total()`, `cleanup()` |
 | `RateLimitConfig` | Конфигурация для `RateLimiter`: `enabled`, `messages_per_second`, `burst_size`, `handshake_attempts_per_minute`, `connections_per_minute`; статический `defaults()` |
