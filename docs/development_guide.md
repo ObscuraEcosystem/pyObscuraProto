@@ -59,3 +59,28 @@ Tests are written using `pytest` and `pytest-asyncio`.
     ```bash
     pytest
     ```
+
+## 4. audit_p0 Scenario Audit
+
+`tests/audit_p0/run_audit.py` launches standalone scenario scripts in subprocesses, applies an external timeout, and classifies each run as `PASS` / `FAIL` / `HANG` / `UNKNOWN`. The observed status of every scenario is frozen in the `EXPECTED` table inside `run_audit.py`; the runner exits `1` if any scenario diverges from `EXPECTED`. In CI this runs as the `audit` job of `autotests.yml` (ubuntu-latest, parallel to `build-and-test`, `timeout-minutes: 25`).
+
+### Running locally
+
+```bash
+python tests/audit_p0/run_audit.py
+```
+
+The interpreter is resolved in priority order: explicit `AUDIT_PYTHON` override → the interpreter running the script (`sys.executable`) → `.venv` interpreter. To force a specific interpreter:
+
+```bash
+AUDIT_PYTHON=/path/to/python tests/audit_p0/run_audit.py
+```
+
+Exit codes: `0` — every scenario matches `EXPECTED`; `1` — at least one divergence (this is what fails the CI `audit` job).
+
+### Updating EXPECTED
+
+- The rule: change a scenario and its `EXPECTED` entry in **one commit** — never flip `EXPECTED` separately from the scenario code that justifies it.
+- `UNKNOWN` is **always red**: a scenario reporting `UNKNOWN` fails the run regardless of the `EXPECTED` value.
+- `HANG` is detected from faulthandler thread dumps: CPython 3.13+ prints `Thread 0x... (most recent call first):`, and the structurally unique marker `"(most recent call first)"` is what the runner greps for. Do not rely on exit codes alone — a scenario may also print its own `RESULT: HANG ...` line.
+- The current `FAIL` entries in `EXPECTED` are transitional placeholders with `TODO` — the scenarios themselves are not finished (stubs use `os._exit` / `IndentationError`), so the `audit` job is expected to stay red until they are implemented.

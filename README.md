@@ -493,6 +493,19 @@ pre-commit install
 - **pytest** — testing (`python -m pytest tests/`)
 - **Pre-commit** — runs checks before every commit
 
+### CI — `audit_p0`
+
+The `audit_p0` scenario suite (`tests/audit_p0/run_audit.py`) runs in the main CI workflow (`autotests.yml`) as the `audit` job — ubuntu-latest, in parallel with `build-and-test`, `timeout-minutes: 25`. Each scenario is launched as a subprocess with an external timeout and classified:
+
+| Status | Meaning |
+|---|---|
+| `PASS` | scenario exited cleanly and matched the expected outcome |
+| `FAIL` | scenario completed, but the observed result diverged from expectations |
+| `HANG` | scenario did not finish before the external timeout — faulthandler thread dump detected via the `"(most recent call first)"` marker (CPython 3.13+) |
+| `UNKNOWN` | no usable exit status was reported — always treated as red |
+
+The observed status of every scenario is frozen in the `EXPECTED` table inside `run_audit.py` (baseline v1.1.1, 14 entries). The runner exits `1` on any divergence (including any `UNKNOWN`) and `0` when everything matches — this is what the CI `audit` job reports. Current `FAIL` entries in `EXPECTED` are **transitional placeholders** marked with `TODO`: those scenarios are not finished yet, so a red `audit` job does not necessarily mean a regression. See [docs/development_guide.md](docs/development_guide.md) for running the audit locally and updating `EXPECTED`.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ## Known Issues

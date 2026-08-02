@@ -1,3 +1,8 @@
+### Unreleased — 2026-08-02
+
+- **audit_p0 in main CI**: `tests/audit_p0/run_audit.py` now runs in the main `autotests.yml` workflow as the `audit` job (ubuntu-latest, in parallel with `build-and-test`, `timeout-minutes: 25`). The runner freezes observed statuses in the `EXPECTED` table (14 entries, baseline v1.1.1), resolves the interpreter via `AUDIT_PYTHON` → `sys.executable` → `.venv`, treats any `UNKNOWN` as a failure, and exits `1` on divergence, `0` on a full match.
+- **HANG detection fix**: CPython 3.13/3.14 faulthandler thread dumps are detected via the structurally unique `"(most recent call first)"` marker instead of the old heuristic. `FAIL` entries in `EXPECTED` are transitional placeholders with `TODO` — the scenarios are not finalized yet, so the `audit` job is expected to stay red until they are.
+
 ### 1.1.1 — 2026-08-02
 
 Release against the C++ core pinned to **v1.1.1** (FetchContent `GIT_TAG`). 286 tests passing (was 218); socket tests stable; 97% coverage on `__init__.py`.
